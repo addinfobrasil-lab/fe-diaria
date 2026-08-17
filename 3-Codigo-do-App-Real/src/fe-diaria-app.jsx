@@ -8,7 +8,7 @@ import {
   Search, Play, ArrowRight, ShoppingBag, Sun, Moon, Bell, RotateCcw,
   Plus, Bookmark, Star, User, Crown, Volume2, VolumeX, Sparkles,
   MessageSquare, EyeOff, RefreshCw, Send, FileText, ShieldCheck,
-  ShieldAlert, Loader2, MapPin, LocateFixed,
+  ShieldAlert, Loader2, MapPin, LocateFixed, Share2,
 } from "lucide-react";
 
 /* ============================== THEME ============================== */
@@ -345,6 +345,21 @@ function timeAgo(ts) {
   return `há ${d}d`;
 }
 
+async function shareText(text, title) {
+  try {
+    if (typeof window !== "undefined" && window.Capacitor?.Share) {
+      await window.Capacitor.Share.share({ title, text });
+      return;
+    }
+    if (navigator.share) {
+      await navigator.share({ title, text });
+      return;
+    }
+    await navigator.clipboard.writeText(text);
+    alert("Texto copiado para compartilhar.");
+  } catch { /* usuário cancelou ou sem suporte */ }
+}
+
 // Uses Google Gemini (free tier, no credit card required) to suggest a Bible passage
 // based on what the person wrote in their journal. Get a free key at aistudio.google.com/apikey
 // and add VITE_GEMINI_API_KEY=... to .env.local.
@@ -673,7 +688,7 @@ function PremiumModal({ isPremium, onBuy, onRestore, onClose }) {
             <button onClick={onBuy} className="w-full rounded-full py-3 font-semibold text-sm transition active:scale-95 flex items-center justify-center gap-2" style={{ backgroundColor: T.accent, color: T.onAccent }}>
               <Crown size={15} fill={T.onAccent} /> Desbloquear Premium · R$ 12,00
             </button>
-            <p className="text-xs mt-3 leading-relaxed" style={{ color: T.textMuted }}>🔧 Demonstração: em produção, este botão abriria o checkout da Google Play ou da App Store.</p>
+            <p className="text-xs mt-3 leading-relaxed" style={{ color: T.textMuted }}>Sistema de pagamento ainda não integrado. Em produção, este botão abriria o checkout da Google Play (billing) com o valor de R$ 12,00. Por enquanto, a compra é apenas simulada para testes.</p>
           </>
         )}
       </div>
@@ -763,28 +778,85 @@ function ProfileModal({ user, onSignIn, onSignOut, onClose }) {
 
 function NotificationRow() {
   const T = useTheme();
-  const supported = typeof window !== "undefined" && "Notification" in window;
-  const [status, setStatus] = useState(supported ? Notification.permission : "unsupported");
+  const isNative = typeof window !== "undefined" && window.Capacitor?.Plugins?.LocalNotifications;
+  const supported = isNative || (typeof window !== "undefined" && "Notification" in window);
+  const [status, setStatus] = useState(supported ? "unknown" : "unsupported");
+  const [hour, setHour] = useState(7);
+  const [minute, setMinute] = useState(0);
+
+  useEffect(() => {
+    if (!supported) return;
+    (async () => {
+      try {
+        if (isNative) {
+          const perms = await window.Capacitor.Plugins.LocalNotifications.checkPermissions();
+          setStatus(perms.display === "granted" ? "granted" : "denied");
+          const sched = await window.Capacitor.Plugins.LocalNotifications.getPending();
+          if (sched.notifications && sched.notifications.length > 0) setStatus("granted");
+        } else {
+          setStatus(Notification.permission === "granted" ? "granted" : "denied");
+        }
+      } catch { setStatus("denied"); }
+    })();
+  }, [isNative, supported]);
+
   const enable = async () => {
     if (!supported) return;
     try {
-      const perm = await Notification.requestPermission();
-      setStatus(perm);
-      if (perm === "granted") new Notification("Fé Diária", { body: "Lembretes diários ativados nesta aba ✝️" });
-    } catch { setStatus("blocked"); }
+      if (isNative) {
+        const perms = await window.Capacitor.Plugins.LocalNotifications.requestPermissions();
+        if (perms.display !== "granted") { setStatus("denied"); return; }
+        await window.Capacitor.Plugins.LocalNotifications.schedule({
+          notifications: [{
+            id: 1,
+            title: "Fé Diária",
+            body: "Hora do seu momento com Deus. 🕊️",
+            schedule: { on: { hour, minute } },
+            extra: { screen: "home" },
+          }],
+        });
+        setStatus("granted");
+      } else {
+        const perm = await Notification.requestPermission();
+        setStatus(perm);
+        if (perm === "granted") new Notification("Fé Diária", { body: "Lembretes diários ativados nesta aba ✝️" });
+      }
+    } catch { setStatus("denied"); }
   };
+
+  const disable = async () => {
+    try {
+      if (isNative) {
+        await window.Capacitor.Plugins.LocalNotifications.cancel({ notifications: [{ id: 1 }] });
+      }
+      setStatus("denied");
+    } catch { setStatus("denied"); }
+  };
+
   return (
     <div className="rounded-2xl p-3.5" style={{ backgroundColor: T.card, border: `1px solid ${T.border}` }}>
       <div className="flex items-center gap-3">
         <Bell size={18} style={{ color: T.accent }} />
         <div className="flex-1">
           <p className="text-sm font-medium" style={{ color: T.text }}>Lembrete diário</p>
-          <p className="text-xs" style={{ color: T.textMuted }}>{status === "granted" ? "Ativado nesta aba" : !supported ? "Não suportado neste navegador" : "Um aviso para não esquecer seu momento com Deus"}</p>
+          <p className="text-xs" style={{ color: T.textMuted }}>
+            {!supported ? "Não suportado neste dispositivo" : status === "granted" ? `Ativado todos os dias às ${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}` : isNative ? "Um aviso diário para seu momento com Deus" : "Um aviso para não esquecer seu momento com Deus"}
+          </p>
         </div>
-        {status !== "granted" && supported && (<button onClick={enable} className="text-xs px-3 py-1.5 rounded-full shrink-0 transition active:scale-95" style={{ backgroundColor: T.accent, color: T.onAccent }}>Ativar</button>)}
+        {supported && status === "granted" ? (
+          <button onClick={disable} className="text-xs px-3 py-1.5 rounded-full shrink-0 transition active:scale-95" style={{ backgroundColor: T.cardAlt, color: T.textMuted }}>Desativar</button>
+        ) : supported ? (
+          <button onClick={enable} className="text-xs px-3 py-1.5 rounded-full shrink-0 transition active:scale-95" style={{ backgroundColor: T.accent, color: T.onAccent }}>Ativar</button>
+        ) : null}
       </div>
+      {supported && status !== "granted" && (
+        <div className="flex items-center gap-2 mt-3">
+          <input type="time" value={`${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`} onChange={(e) => { const [h, m] = e.target.value.split(":").map(Number); setHour(h); setMinute(m || 0); }} className="rounded-lg px-2 py-1.5 text-xs outline-none" style={{ backgroundColor: T.cardAlt, color: T.text, border: `1px solid ${T.border}` }} />
+          <span className="text-xs" style={{ color: T.textMuted }}>horário do lembrete diário</span>
+        </div>
+      )}
       <p className="text-xs mt-2.5 leading-relaxed" style={{ color: T.textMuted }}>
-        🔧 Dentro deste preview, o navegador só entrega notificações reais quando o app roda como PWA instalada ou app nativo — não dentro de um iframe de terceiros. Publicando com Capacitor (Local Notifications) ou como PWA com Web Push, este lembrete passa a chegar de verdade na tela do celular, todos os dias.
+        {isNative ? "No app instalado, o lembrete chega na tela do celular todos os dias no horário escolhido." : "Dentro do navegador, o lembrete aparece enquanto a aba estiver aberta. No app instalado, chega de verdade na tela do celular todos os dias."}
       </p>
     </div>
   );
@@ -827,7 +899,10 @@ function HomeScreen({ verse, onOpen, doneCount, isPremium, songOfDay, onGoLouvor
       )}
 
       <div className="rounded-2xl p-4" style={{ backgroundColor: T.card, border: `1px solid ${T.border}` }}>
-        <Quote size={16} style={{ color: T.accent, opacity: 0.7 }} />
+        <div className="flex items-start justify-between gap-2">
+          <Quote size={16} style={{ color: T.accent, opacity: 0.7 }} />
+          <button onClick={() => shareText(`“${verse.text}”\n— ${verse.ref}`, "Versículo do dia — Fé Diária")} className="shrink-0 transition active:scale-95" title="Compartilhar"><Share2 size={15} style={{ color: T.textMuted }} /></button>
+        </div>
         <p className="fd-display text-sm mt-2 leading-relaxed" style={{ color: T.text }}>“{verse.text}”</p>
         <p className="text-xs mt-2 font-medium" style={{ color: T.accent }}>{verse.ref}</p>
       </div>
@@ -978,6 +1053,7 @@ function BibleScreen({ book, setBook, chapter, setChapter, cache, setCache, vers
                   return (
                     <div key={v.v} className="flex items-start gap-2">
                       <p className="text-sm leading-relaxed flex-1" style={{ color: T.text }}><span className="text-xs mr-1.5 font-semibold" style={{ color: T.accent }}>{v.v}</span>{v.t}</p>
+                      <button onClick={() => shareText(`“${v.t}”\n— ${book.name} ${chapter}:${v.v}`, "Versículo — Fé Diária")} className="shrink-0 mt-0.5" title="Compartilhar"><Share2 size={13} style={{ color: T.textMuted }} /></button>
                       <button onClick={() => toggleFavoriteVerse(book.name, chapter, v.v, v.t)} className="shrink-0 mt-0.5"><Star size={13} fill={isFav ? T.accent : "none"} style={{ color: T.accent }} /></button>
                     </div>
                   );
@@ -1391,6 +1467,7 @@ function HelpScreen({ isPremium, onOpenPremium, soundOn, onToggleSound, onOpenTe
       </div>
       <button onClick={onOpenTerms} className="w-full flex items-center justify-center gap-1.5 text-xs py-2 transition active:scale-95" style={{ color: T.textMuted }}><FileText size={12} /> Termos de Uso e Privacidade</button>
       <p className="text-xs text-center pt-1 pb-1" style={{ color: T.textMuted }}>Fé Diária · seus dados ficam salvos neste dispositivo</p>
+      <p className="text-xs text-center pb-2" style={{ color: T.textMuted }}>Desenvolvido por <b style={{ color: T.accent }}>AddInfoBrasil</b></p>
     </div>
   );
 }
@@ -1490,14 +1567,24 @@ function CommunityScreen({ user, hiddenPosts, onHidePost, likedPosts, onToggleLi
   const load = async () => {
     setStatus("loading");
     try {
+      let local = [];
+      try {
+        const res = await window.storage.get(COMMUNITY_KEY, true);
+        local = res && res.value ? JSON.parse(res.value) : [];
+      } catch { local = []; }
       if (supabaseReady) {
         try {
-          const { data, error } = await supabase.from("posts_with_likes").select("*").order("created_at", { ascending: false });
-          if (!error) { setPosts((data || []).map(mapPost)); setStatus("idle"); return; }
-        } catch { /* falhou — tenta cache local abaixo */ }
+          const { data, error } = await supabase.from("posts_with_likes").select("*").order("created_at", { ascending: false }).limit(100);
+          if (!error) {
+            // Mescla posts da nuvem com os locais (por id), sem duplicar.
+            const cloud = (data || []).map(mapPost);
+            const ids = new Set(cloud.map((p) => p.id));
+            const merged = [...cloud, ...local.filter((p) => !ids.has(p.id))].sort((a, b) => b.ts - a.ts);
+            setPosts(merged); setStatus("idle"); return;
+          }
+        } catch { /* cai para local abaixo */ }
       }
-      const res = await window.storage.get(COMMUNITY_KEY, true);
-      setPosts(res && res.value ? JSON.parse(res.value) : []);
+      setPosts(local);
     } catch { setPosts([]); } finally {
       setStatus("idle");
     }
@@ -1619,10 +1706,8 @@ function CommunityScreen({ user, hiddenPosts, onHidePost, likedPosts, onToggleLi
         <div className="px-5 py-2 space-y-3 flex-1 overflow-y-auto fd-scroll">
           <div className="rounded-2xl p-3.5" style={{ backgroundColor: T.card, border: `1px solid ${T.border}` }}>
             <p className="text-xs mb-2" style={{ color: T.textMuted }}>Adicione pessoas para conversar em particular. Os amigos e as mensagens ficam salvos apenas neste dispositivo.</p>
-            <div className="flex gap-2">
-              <input value={friendName} onChange={(e) => setFriendName(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") addFriend(friendName); }} placeholder="Nome do amigo" className="flex-1 rounded-xl px-3 py-2.5 text-sm outline-none" style={{ backgroundColor: T.cardAlt, color: T.text, border: `1px solid ${T.border}` }} />
-              <button onClick={() => addFriend(friendName)} className="rounded-xl px-4 text-sm font-medium" style={{ backgroundColor: T.accent, color: T.onAccent }}>Adicionar</button>
-            </div>
+            <input value={friendName} onChange={(e) => setFriendName(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") addFriend(friendName); }} placeholder="Nome do amigo" className="w-full rounded-xl px-3 py-2.5 text-sm outline-none mb-2" style={{ backgroundColor: T.cardAlt, color: T.text, border: `1px solid ${T.border}` }} />
+            <button onClick={() => addFriend(friendName)} className="w-full rounded-xl py-2.5 text-sm font-medium transition active:scale-95" style={{ backgroundColor: T.accent, color: T.onAccent, opacity: friendName.trim() ? 1 : 0.5 }}>Adicionar</button>
           </div>
           {friends.length === 0 ? (
             <p className="text-xs text-center py-6 leading-relaxed" style={{ color: T.textMuted }}>Nenhum amigo ainda. Adicione alguém pelo nome para começar a conversar.</p>
@@ -1661,7 +1746,7 @@ function CommunityScreen({ user, hiddenPosts, onHidePost, likedPosts, onToggleLi
         <div className="px-5 py-2 space-y-4 flex-1 overflow-y-auto fd-scroll">
           <div className="rounded-xl p-3 flex items-start gap-2" style={{ backgroundColor: T.cardAlt }}>
             <Users size={14} style={{ color: T.accent, marginTop: 2 }} />
-            <p className="text-xs leading-relaxed" style={{ color: T.textMuted }}>{supabaseReady ? "Mural público compartilhado com todos os usuários do Fé Diária." : "Mural local — visível apenas neste dispositivo. Conecte o Supabase para compartilhar."}</p>
+            <p className="text-xs leading-relaxed" style={{ color: T.textMuted }}>{supabaseReady ? (user?.sub ? "Mural público compartilhado com todos os usuários do Fé Diária. Suas publicações aparecem para todo mundo." : "Para publicar e ver as publicações de todos os usuários, entre com sua conta Google pelo ícone do perfil na tela inicial.") : "Mural local — visível apenas neste dispositivo. Conecte o Supabase para compartilhar."}</p>
           </div>
 
           <div className="rounded-2xl p-3.5" style={{ backgroundColor: T.card, border: `1px solid ${T.border}` }}>

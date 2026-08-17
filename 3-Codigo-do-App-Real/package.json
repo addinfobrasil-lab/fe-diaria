@@ -11,8 +11,11 @@
     "lint": "eslint . --ext js,jsx"
   },
   "dependencies": {
+    "@capacitor-community/admob": "^6.0.0",
     "@capacitor/app": "^6.0.0",
     "@capacitor/geolocation": "^6.0.0",
+    "@capacitor/local-notifications": "^6.0.0",
+    "@capacitor/share": "^6.0.0",
     "@capacitor/status-bar": "^6.0.0",
     "@supabase/supabase-js": "^2.45.0",
     "lucide-react": "^0.400.0",
@@ -20,6 +23,7 @@
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
+    "@capacitor/assets": "^3.0.5",
     "@vitejs/plugin-react": "^4.3.1",
     "autoprefixer": "^10.5.4",
     "eslint": "^9.39.5",
@@ -31,7 +35,6 @@
     "vite": "^5.4.0"
   },
   "optionalDependencies": {
-    "@capacitor-community/admob": "^6.0.0",
     "@capacitor/android": "^6.0.0",
     "@capacitor/cli": "^6.0.0",
     "@capacitor/core": "^6.0.0",
