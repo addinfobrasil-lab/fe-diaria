@@ -44,6 +44,10 @@ jobs:
         working-directory: 3-Codigo-do-App-Real
         run: npx cap sync android
 
+      - name: Dar permissão de execução ao gradlew
+        working-directory: 3-Codigo-do-App-Real/android
+        run: chmod +x gradlew
+
       - name: Build APK (debug)
         working-directory: 3-Codigo-do-App-Real/android
         run: ./gradlew assembleDebug
