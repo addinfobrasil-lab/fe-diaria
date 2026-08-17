@@ -3,7 +3,7 @@ import react from 'eslint-plugin-react';
 import reactHooks from 'eslint-plugin-react-hooks';
 
 export default [
-  { ignores: ['dist/**', 'node_modules/**', 'android/**', 'capacitor.config.js'] },
+  { ignores: ['dist/**', 'node_modules/**', 'android/**', 'capacitor.config.js', 'scripts/**'] },
   js.configs.recommended,
   {
     files: ['**/*.{js,jsx}'],

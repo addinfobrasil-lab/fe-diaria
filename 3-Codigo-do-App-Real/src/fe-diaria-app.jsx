@@ -1,6 +1,7 @@
 import { useState, useEffect, createContext, useContext } from "react";
 import { supabase } from "./lib/supabaseClient.js";
 import { BIBLE_FALLBACK } from "./data/bible-fallback.js";
+import { StatusBar as NativeStatusBar } from "@capacitor/status-bar";
 import {
   Home, BookOpen, Music, Calendar, HelpCircle, DollarSign, Compass, Heart,
   Users, MessageCircle, Flame, Quote, X, Check, ChevronLeft, ChevronRight,
@@ -299,6 +300,7 @@ const NAV_ITEMS = [
 
 const STORE_KEY = "fediaria:state:v3";
 const COMMUNITY_KEY = "fediaria:community:posts";
+const FRIENDS_KEY = "fediaria:community:friends";
 const TERMS_VERSION = "1.0";
 
 const POST_CATEGORIES = [
@@ -318,6 +320,7 @@ function getMonthGrid(year, month) {
   return grid;
 }
 function dateKey(d) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; }
+function dmThreadKey(nameA, nameB) { return "fediaria:dm:" + [nameA, nameB].map((n) => (n || "").trim().toLowerCase()).sort().join("__"); }
 function uid() { return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`; }
 
 function normalizeName(s) { return (s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim(); }
@@ -473,23 +476,12 @@ function VerseSkeleton() {
 
 function StatusBar({ theme, onToggleTheme }) {
   const T = useTheme();
-  const [time, setTime] = useState("");
-  useEffect(() => { setTime(new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })); }, []);
   return (
     <div className="flex items-center justify-between px-5 pt-3 pb-1">
-      <span className="text-xs font-medium" style={{ color: T.text }}>{time}</span>
-      <div className="flex items-center gap-3">
-        <button onClick={onToggleTheme} className="transition active:scale-95" aria-label="Alternar tema">
-          {theme === "dark" ? <Sun size={14} style={{ color: T.text }} /> : <Moon size={14} style={{ color: T.text }} />}
-        </button>
-        <div className="flex items-end gap-0.5" style={{ height: 10 }}>
-          <div style={{ width: 2, height: 4, backgroundColor: T.text }} /><div style={{ width: 2, height: 6, backgroundColor: T.text }} />
-          <div style={{ width: 2, height: 8, backgroundColor: T.text }} /><div style={{ width: 2, height: 10, backgroundColor: T.text }} />
-        </div>
-        <div className="rounded-sm border flex items-center p-px" style={{ width: 18, height: 10, borderColor: T.text }}>
-          <div style={{ width: 12, height: 6, backgroundColor: T.text, borderRadius: 1 }} />
-        </div>
-      </div>
+      <span className="text-xs font-medium" style={{ color: T.text }}>Fé Diária</span>
+      <button onClick={onToggleTheme} className="transition active:scale-95" aria-label="Alternar tema">
+        {theme === "dark" ? <Sun size={14} style={{ color: T.text }} /> : <Moon size={14} style={{ color: T.text }} />}
+      </button>
     </div>
   );
 }
@@ -877,8 +869,16 @@ function BibleScreen({ book, setBook, chapter, setChapter, cache, setCache, vers
   useEffect(() => {
     if (cache[cacheKey]) return;
     let cancelled = false;
-    setStatus("loading");
+    const offline = BIBLE_SAMPLE[`${book.name}-${chapter}`];
+    // Mostra o texto offline (Bíblia embutida) imediatamente, sem depender da internet.
+    if (offline) {
+      setCache((prev) => ({ ...prev, [cacheKey]: offline }));
+      setStatus("idle");
+    } else {
+      setStatus("loading");
+    }
     (async () => {
+      if (cancelled) return;
       try {
         const stored = await window.storage.get(`fediaria:bible:${cacheKey}`, false);
         if (stored && stored.value) {
@@ -894,7 +894,7 @@ function BibleScreen({ book, setBook, chapter, setChapter, cache, setCache, vers
         if (!cancelled) { setCache((prev) => ({ ...prev, [cacheKey]: vs })); setStatus("idle"); }
         window.storage.set(`fediaria:bible:${cacheKey}`, JSON.stringify(vs), false).catch(() => {});
       } catch {
-        if (!cancelled) setStatus("error");
+        if (!cancelled && !offline) setStatus("error");
       }
     })();
     return () => { cancelled = true; };
@@ -982,7 +982,7 @@ function BibleScreen({ book, setBook, chapter, setChapter, cache, setCache, vers
                     </div>
                   );
                 })}
-                <p className="text-xs pt-1" style={{ color: T.textMuted }}>Salvo neste dispositivo — na próxima vez carrega instantâneo, sem gastar nova requisição.</p>
+                <p className="text-xs pt-1" style={{ color: T.textMuted }}>Texto de Almeida Atualizada embutido no app — disponível mesmo sem internet.</p>
               </div>
             ) : status === "error" ? (
               <div>
@@ -1176,55 +1176,73 @@ function ChurchFinder() {
   const [churches, setChurches] = useState([]);
   const [errorMsg, setErrorMsg] = useState("");
 
-  const find = () => {
-    if (!("geolocation" in navigator)) {
+  const getPosition = () => new Promise((resolve, reject) => {
+    const isNative = typeof window !== "undefined" && window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform();
+    if (isNative && window.Capacitor.Plugins?.Geolocation) {
+      window.Capacitor.Plugins.Geolocation.requestPermissions().then((perm) => {
+        if (perm.location !== "granted") return reject(new Error("negada"));
+        return window.Capacitor.Plugins.Geolocation.getCurrentPosition();
+      }).then((pos) => resolve({ lat: pos.coords.latitude, lon: pos.coords.longitude })).catch((e) => reject(e));
+    } else if ("geolocation" in navigator) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => resolve({ lat: pos.coords.latitude, lon: pos.coords.longitude }),
+        (err) => reject(err),
+        { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 }
+      );
+    } else {
+      reject(new Error("unsupported"));
+    }
+  });
+
+  const find = async () => {
+    setStatus("locating");
+    let lat, lon;
+    try {
+      const pos = await getPosition();
+      lat = pos.lat; lon = pos.lon;
+    } catch (e) {
+      const msg = e && e.message === "negada"
+        ? "Permissão de localização negada. Ative a localização nas configurações do app."
+        : "Permissão de localização negada ou indisponível neste dispositivo.";
       setStatus("error");
-      setErrorMsg("Este navegador não suporta localização.");
+      setErrorMsg(msg);
       return;
     }
-    setStatus("locating");
-    navigator.geolocation.getCurrentPosition(
-      async ({ coords }) => {
-        const { latitude: lat, longitude: lon } = coords;
-        setStatus("loading");
-        try {
-          // Geocodificação reversa (grátis, OpenStreetMap Nominatim) — só para mostrar o nome da cidade
-          const geoRes = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}&zoom=10`);
-          const geoData = await geoRes.json();
-          const addr = geoData.address || {};
-          setCityName(addr.city || addr.town || addr.village || addr.county || "sua região");
+    setStatus("loading");
+    try {
+      // Geocodificação reversa (grátis, OpenStreetMap Nominatim) — só para mostrar o nome da cidade
+      const geoRes = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}&zoom=10`);
+      const geoData = await geoRes.json();
+      const addr = geoData.address || {};
+      setCityName(addr.city || addr.town || addr.village || addr.county || "sua região");
 
-          // Busca igrejas próximas (grátis, OpenStreetMap Overpass API)
-          const query = `[out:json][timeout:25];(node["amenity"="place_of_worship"]["religion"="christian"](around:6000,${lat},${lon});way["amenity"="place_of_worship"]["religion"="christian"](around:6000,${lat},${lon}););out center 25;`;
-          const opRes = await fetch("https://overpass-api.de/api/interpreter", { method: "POST", body: query });
-          if (!opRes.ok) throw new Error("overpass status " + opRes.status);
-          const opData = await opRes.json();
-          const list = (opData.elements || [])
-            .map((el) => {
-              const elLat = el.lat ?? el.center?.lat;
-              const elLon = el.lon ?? el.center?.lon;
-              if (!elLat || !elLon) return null;
-              return {
-                id: el.id,
-                name: el.tags?.name || "Igreja",
-                denomination: el.tags?.denomination || "",
-                lat: elLat, lon: elLon,
-                distanceKm: haversineKm(lat, lon, elLat, elLon),
-              };
-            })
-            .filter(Boolean)
-            .sort((a, b) => a.distanceKm - b.distanceKm)
-            .slice(0, 12);
-          setChurches(list);
-          setStatus("done");
-        } catch {
-          setStatus("error");
-          setErrorMsg("Não consegui buscar igrejas agora. Tente novamente em instantes.");
-        }
-      },
-      () => { setStatus("error"); setErrorMsg("Permissão de localização negada ou indisponível neste navegador."); },
-      { timeout: 10000 }
-    );
+      // Busca igrejas próximas (grátis, OpenStreetMap Overpass API)
+      const query = `[out:json][timeout:25];(node["amenity"="place_of_worship"]["religion"="christian"](around:6000,${lat},${lon});way["amenity"="place_of_worship"]["religion"="christian"](around:6000,${lat},${lon}););out center 25;`;
+      const opRes = await fetch("https://overpass-api.de/api/interpreter", { method: "POST", body: query });
+      if (!opRes.ok) throw new Error("overpass status " + opRes.status);
+      const opData = await opRes.json();
+      const list = (opData.elements || [])
+        .map((el) => {
+          const elLat = el.lat ?? el.center?.lat;
+          const elLon = el.lon ?? el.center?.lon;
+          if (!elLat || !elLon) return null;
+          return {
+            id: el.id,
+            name: el.tags?.name || "Igreja",
+            denomination: el.tags?.denomination || "",
+            lat: elLat, lon: elLon,
+            distanceKm: haversineKm(lat, lon, elLat, elLon),
+          };
+        })
+        .filter(Boolean)
+        .sort((a, b) => a.distanceKm - b.distanceKm)
+        .slice(0, 12);
+      setChurches(list);
+      setStatus("done");
+    } catch {
+      setStatus("error");
+      setErrorMsg("Não consegui buscar igrejas agora. Tente novamente em instantes.");
+    }
   };
 
   return (
@@ -1377,8 +1395,82 @@ function HelpScreen({ isPremium, onOpenPremium, soundOn, onToggleSound, onOpenTe
   );
 }
 
+function MiniAvatar({ name, size = 28 }) {
+  const T = useTheme();
+  return (
+    <div className="rounded-full flex items-center justify-center shrink-0 font-semibold" style={{ width: size, height: size, backgroundColor: T.cardAlt, color: T.accent, fontSize: size * 0.4 }}>
+      {(name || "A").charAt(0).toUpperCase()}
+    </div>
+  );
+}
+
+function DMThread({ myName, otherName, onBack }) {
+  const T = useTheme();
+  const key = dmThreadKey(myName, otherName);
+  const [messages, setMessages] = useState([]);
+  const [status, setStatus] = useState("loading");
+  const [text, setText] = useState("");
+
+  const load = async () => {
+    setStatus("loading");
+    try {
+      const res = await window.storage.get(key, true);
+      setMessages(res && res.value ? JSON.parse(res.value) : []);
+    } catch { setMessages([]); }
+    finally { setStatus("idle"); }
+  };
+  useEffect(() => { load(); }, [key]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const send = async () => {
+    const t = text.trim();
+    if (!t) return;
+    try {
+      let current = messages;
+      try { const res = await window.storage.get(key, true); current = res && res.value ? JSON.parse(res.value) : []; } catch { current = []; }
+      const updated = [...current, { id: uid(), from: myName || "Anônimo", text: t.slice(0, 500), ts: Date.now() }].slice(-300);
+      await window.storage.set(key, JSON.stringify(updated), true);
+      setMessages(updated);
+      setText("");
+    } catch { /* keep draft */ }
+  };
+
+  return (
+    <div className="flex flex-col" style={{ height: "100%" }}>
+      <div className="flex items-center gap-2 px-1 pb-2">
+        <button onClick={onBack} className="transition active:scale-95"><ChevronLeft size={18} style={{ color: T.textMuted }} /></button>
+        <MiniAvatar name={otherName} size={26} />
+        <p className="text-sm font-medium" style={{ color: T.text }}>{otherName}</p>
+      </div>
+      <div className="rounded-xl p-2.5 mb-2 flex items-start gap-2" style={{ backgroundColor: T.cardAlt }}>
+        <ShieldAlert size={14} style={{ color: T.accent, marginTop: 1 }} />
+        <p className="text-xs leading-relaxed" style={{ color: T.textMuted }}>Mensagens salvas apenas neste dispositivo. Não é um serviço de mensageria real — evite compartilhar dados sensíveis.</p>
+      </div>
+      <div className="flex-1 overflow-y-auto space-y-2 pr-1">
+        {status === "loading" ? <VerseSkeleton /> : messages.length === 0 ? (
+          <p className="text-xs text-center py-6" style={{ color: T.textMuted }}>Nenhuma mensagem ainda. Diga oi!</p>
+        ) : messages.map((m) => (
+          <div key={m.id} className="max-w-[80%] rounded-2xl px-3 py-2" style={{ backgroundColor: m.from === myName ? T.accent : T.card, color: m.from === myName ? T.onAccent : T.text, marginLeft: m.from === myName ? "auto" : 0, border: m.from === myName ? "none" : `1px solid ${T.border}` }}>
+            <p className="text-sm whitespace-pre-wrap">{m.text}</p>
+            <p className="text-xs mt-0.5 opacity-70">{timeAgo(m.ts)}</p>
+          </div>
+        ))}
+      </div>
+      <div className="pt-2">
+        <div className="flex items-center gap-2 mt-2">
+          <input value={text} onChange={(ev) => setText(ev.target.value)} onKeyDown={(ev) => { if (ev.key === "Enter") send(); }} placeholder="Escreva uma mensagem..." className="flex-1 rounded-full px-3.5 py-2 text-sm outline-none" style={{ backgroundColor: T.cardAlt, color: T.text }} />
+          <button onClick={send} className="rounded-full p-2 transition active:scale-95" style={{ backgroundColor: T.accent }}><Send size={15} style={{ color: T.onAccent }} /></button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function CommunityScreen({ user, hiddenPosts, onHidePost, likedPosts, onToggleLike }) {
   const T = useTheme();
+  const [section, setSection] = useState("mural"); // mural | amigos | msgs
+  const [friends, setFriends] = useState([]);
+  const [friendName, setFriendName] = useState("");
+  const [activeChat, setActiveChat] = useState(null);
   const [posts, setPosts] = useState([]);
   const [status, setStatus] = useState("loading");
   const [text, setText] = useState("");
@@ -1399,31 +1491,61 @@ function CommunityScreen({ user, hiddenPosts, onHidePost, likedPosts, onToggleLi
     setStatus("loading");
     try {
       if (supabaseReady) {
-        const { data, error } = await supabase.from("posts_with_likes").select("*").order("created_at", { ascending: false });
-        if (error) throw error;
-        setPosts((data || []).map(mapPost));
-      } else {
-        const res = await window.storage.get(COMMUNITY_KEY, true);
-        setPosts(res && res.value ? JSON.parse(res.value) : []);
+        try {
+          const { data, error } = await supabase.from("posts_with_likes").select("*").order("created_at", { ascending: false });
+          if (!error) { setPosts((data || []).map(mapPost)); setStatus("idle"); return; }
+        } catch { /* falhou — tenta cache local abaixo */ }
       }
+      const res = await window.storage.get(COMMUNITY_KEY, true);
+      setPosts(res && res.value ? JSON.parse(res.value) : []);
     } catch { setPosts([]); } finally {
       setStatus("idle");
     }
   };
   useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await window.storage.get(FRIENDS_KEY, true);
+        setFriends(res && res.value ? JSON.parse(res.value) : []);
+      } catch { setFriends([]); }
+    })();
+  }, []);
+
+  const addFriend = async (name) => {
+    const n = name.trim();
+    if (!n) return;
+    const existing = friends.some((f) => f.name.toLowerCase() === n.toLowerCase());
+    if (existing) { setFriendName(""); return; }
+    const updated = [...friends, { id: uid(), name: n, addedAt: Date.now() }];
+    setFriends(updated);
+    await window.storage.set(FRIENDS_KEY, JSON.stringify(updated), true).catch(() => {});
+    setFriendName("");
+  };
+
+  const removeFriend = async (id) => {
+    const updated = friends.filter((f) => f.id !== id);
+    setFriends(updated);
+    await window.storage.set(FRIENDS_KEY, JSON.stringify(updated), true).catch(() => {});
+  };
+
+  const myName = (user && user.name) || "Convidado";
+
   const submitPost = async () => {
     const t = text.trim();
     if (!t || posting) return;
     setPosting(true);
     try {
-      const moderation = await moderateText(t);
+      // Moderação: se a IA falhar (sem internet/API), não bloqueia a publicação.
+      let moderation = { aprovado: true };
+      try { moderation = await moderateText(t); } catch { moderation = { aprovado: true }; }
       if (!moderation.aprovado) {
         alert("Publicação recusada: " + (moderation.motivo || "conteúdo inadequado."));
         setPosting(false);
         return;
       }
-      if (supabaseReady) {
+      if (supabaseReady && user?.sub) {
         const { data, error } = await supabase.from("posts").insert({
           user_id: user?.sub,
           category,
@@ -1446,8 +1568,9 @@ function CommunityScreen({ user, hiddenPosts, onHidePost, likedPosts, onToggleLi
         setPosts(updated);
       }
       setText("");
-    } catch { /* keep draft */ }
-    finally { setPosting(false); }
+    } catch {
+      alert("Não foi possível publicar agora. Verifique sua conexão e tente novamente.");
+    } finally { setPosting(false); }
   };
 
   const like = async (id) => {
@@ -1474,55 +1597,118 @@ function CommunityScreen({ user, hiddenPosts, onHidePost, likedPosts, onToggleLi
 
   const visible = posts.filter((p) => !hiddenPosts.has(p.id));
 
+  if (activeChat) {
+    return (
+      <div className="px-5 py-3" style={{ height: "100%" }}>
+        <DMThread myName={myName} otherName={activeChat} onBack={() => setActiveChat(null)} />
+      </div>
+    );
+  }
+
   return (
-    <div className="px-5 py-3 space-y-4">
-      <div className="rounded-xl p-3 flex items-start gap-2" style={{ backgroundColor: T.cardAlt }}>
-        <Users size={14} style={{ color: T.accent, marginTop: 2 }} />
-        <p className="text-xs leading-relaxed" style={{ color: T.textMuted }}>{supabaseReady ? "Mural público compartilhado com todos os usuários do Fé Diária." : "Mural local — visível apenas neste dispositivo. Conecte o Supabase para compartilhar."}</p>
-      </div>
-
-      <div className="rounded-2xl p-3.5" style={{ backgroundColor: T.card, border: `1px solid ${T.border}` }}>
-        <textarea value={text} onChange={(e) => setText(e.target.value.slice(0, 280))} rows={3} placeholder={`Compartilhe algo com a comunidade${user ? ", " + user.name.split(" ")[0] : ""}...`} className="w-full rounded-xl p-2.5 text-sm outline-none resize-none" style={{ backgroundColor: T.cardAlt, color: T.text }} />
-        <div className="flex gap-1.5 overflow-x-auto mt-2 pb-1">
-          {POST_CATEGORIES.map((c) => (<button key={c.id} onClick={() => setCategory(c.id)} className="text-xs px-2.5 py-1 rounded-full shrink-0" style={{ backgroundColor: category === c.id ? T.accent : T.cardAlt, color: category === c.id ? T.onAccent : T.textMuted }}>{c.label}</button>))}
-        </div>
-        <div className="flex items-center justify-between mt-2">
-          <span className="text-xs" style={{ color: T.textMuted }}>{text.length}/280</span>
-          <button onClick={submitPost} disabled={!text.trim() || posting} className="flex items-center gap-1.5 text-xs px-4 py-2 rounded-full font-medium transition active:scale-95" style={{ backgroundColor: T.accent, color: T.onAccent, opacity: !text.trim() || posting ? 0.5 : 1 }}>
-            <Send size={13} /> {posting ? "Publicando..." : "Publicar"}
+    <div className="flex flex-col" style={{ height: "100%" }}>
+      <div className="flex gap-1.5 px-5 pt-3 pb-2">
+        {[["mural", "Mural"], ["amigos", "Amigos"], ["msgs", "Mensagens"]].map(([id, label]) => (
+          <button key={id} onClick={() => setSection(id)} className="text-xs px-3 py-1.5 rounded-full font-medium transition active:scale-95" style={{ backgroundColor: section === id ? T.accent : T.card, color: section === id ? T.onAccent : T.text, border: `1px solid ${section === id ? T.accent : T.border}` }}>
+            {label}
           </button>
-        </div>
+        ))}
       </div>
 
-      <div className="flex items-center justify-between">
-        <p className="text-xs uppercase tracking-wider" style={{ color: T.textMuted }}>Feed da comunidade</p>
-        <button onClick={load} className="flex items-center gap-1 text-xs transition active:scale-95" style={{ color: T.accent }}><RefreshCw size={12} /> Atualizar</button>
-      </div>
-
-      {status === "loading" ? (
-        <VerseSkeleton />
-      ) : visible.length === 0 ? (
-        <p className="text-xs text-center py-6 leading-relaxed" style={{ color: T.textMuted }}>Ainda não há publicações. Seja a primeira pessoa a compartilhar algo hoje.</p>
-      ) : (
-        <div className="space-y-2">
-          {visible.map((p) => {
-            const catLabel = (POST_CATEGORIES.find((c) => c.id === p.category) || {}).label || "";
-            const liked = likedPosts.has(p.id);
-            return (
-              <div key={p.id} className="rounded-2xl p-3.5" style={{ backgroundColor: T.card, border: `1px solid ${T.border}` }}>
-                <div className="flex items-center gap-2 mb-1.5">
-                  <div className="w-7 h-7 rounded-full flex items-center justify-center shrink-0 text-xs font-semibold" style={{ backgroundColor: T.cardAlt, color: T.accent }}>{(p.name || "A").charAt(0).toUpperCase()}</div>
-                  <div className="flex-1 min-w-0"><p className="text-xs font-medium truncate" style={{ color: T.text }}>{p.name}</p><p className="text-xs" style={{ color: T.textMuted }}>{catLabel} · {timeAgo(p.ts)}</p></div>
-                  <button onClick={() => onHidePost(p.id)} title="Ocultar para mim"><EyeOff size={13} style={{ color: T.textMuted }} /></button>
+      {section === "amigos" && (
+        <div className="px-5 py-2 space-y-3 flex-1 overflow-y-auto fd-scroll">
+          <div className="rounded-2xl p-3.5" style={{ backgroundColor: T.card, border: `1px solid ${T.border}` }}>
+            <p className="text-xs mb-2" style={{ color: T.textMuted }}>Adicione pessoas para conversar em particular. Os amigos e as mensagens ficam salvos apenas neste dispositivo.</p>
+            <div className="flex gap-2">
+              <input value={friendName} onChange={(e) => setFriendName(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") addFriend(friendName); }} placeholder="Nome do amigo" className="flex-1 rounded-xl px-3 py-2.5 text-sm outline-none" style={{ backgroundColor: T.cardAlt, color: T.text, border: `1px solid ${T.border}` }} />
+              <button onClick={() => addFriend(friendName)} className="rounded-xl px-4 text-sm font-medium" style={{ backgroundColor: T.accent, color: T.onAccent }}>Adicionar</button>
+            </div>
+          </div>
+          {friends.length === 0 ? (
+            <p className="text-xs text-center py-6 leading-relaxed" style={{ color: T.textMuted }}>Nenhum amigo ainda. Adicione alguém pelo nome para começar a conversar.</p>
+          ) : (
+            <div className="space-y-2">
+              {friends.map((f) => (
+                <div key={f.id} className="rounded-2xl p-3 flex items-center gap-3" style={{ backgroundColor: T.card, border: `1px solid ${T.border}` }}>
+                  <MiniAvatar name={f.name} size={34} />
+                  <div className="flex-1 min-w-0"><p className="text-sm font-medium truncate" style={{ color: T.text }}>{f.name}</p><p className="text-xs" style={{ color: T.textMuted }}>Amigo desde {timeAgo(f.addedAt)}</p></div>
+                  <button onClick={() => setActiveChat(f.name)} className="text-xs px-3 py-1.5 rounded-full font-medium" style={{ backgroundColor: T.accent, color: T.onAccent }}>Conversar</button>
+                  <button onClick={() => removeFriend(f.id)} className="transition active:scale-95"><X size={15} style={{ color: T.textMuted }} /></button>
                 </div>
-                <p className="text-sm leading-relaxed" style={{ color: T.text }}>{p.text}</p>
-                <button onClick={() => like(p.id)} className="flex items-center gap-1.5 mt-2 transition active:scale-95">
-                  <Heart size={15} fill={liked ? T.accent : "none"} style={{ color: T.accent }} />
-                  <span className="text-xs" style={{ color: T.textMuted }}>{p.likes || 0}</span>
-                </button>
-              </div>
-            );
-          })}
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {section === "msgs" && (
+        <div className="px-5 py-2 space-y-3 flex-1 overflow-y-auto fd-scroll">
+          {friends.length === 0 ? (
+            <p className="text-xs text-center py-6 leading-relaxed" style={{ color: T.textMuted }}>Adicione amigos na aba &quot;Amigos&quot; para trocar mensagens.</p>
+          ) : (
+            friends.map((f) => (
+              <button key={f.id} onClick={() => setActiveChat(f.name)} className="w-full rounded-2xl p-3 flex items-center gap-3 text-left transition active:scale-95" style={{ backgroundColor: T.card, border: `1px solid ${T.border}` }}>
+                <MiniAvatar name={f.name} size={34} />
+                <div className="flex-1 min-w-0"><p className="text-sm font-medium truncate" style={{ color: T.text }}>{f.name}</p><p className="text-xs" style={{ color: T.textMuted }}>Tocar para abrir a conversa</p></div>
+                <ChevronRight size={16} style={{ color: T.textMuted }} />
+              </button>
+            ))
+          )}
+        </div>
+      )}
+
+      {section === "mural" && (
+        <div className="px-5 py-2 space-y-4 flex-1 overflow-y-auto fd-scroll">
+          <div className="rounded-xl p-3 flex items-start gap-2" style={{ backgroundColor: T.cardAlt }}>
+            <Users size={14} style={{ color: T.accent, marginTop: 2 }} />
+            <p className="text-xs leading-relaxed" style={{ color: T.textMuted }}>{supabaseReady ? "Mural público compartilhado com todos os usuários do Fé Diária." : "Mural local — visível apenas neste dispositivo. Conecte o Supabase para compartilhar."}</p>
+          </div>
+
+          <div className="rounded-2xl p-3.5" style={{ backgroundColor: T.card, border: `1px solid ${T.border}` }}>
+            <textarea value={text} onChange={(e) => setText(e.target.value.slice(0, 280))} rows={3} placeholder={`Compartilhe algo com a comunidade${user ? ", " + user.name.split(" ")[0] : ""}...`} className="w-full rounded-xl p-2.5 text-sm outline-none resize-none" style={{ backgroundColor: T.cardAlt, color: T.text }} />
+            <div className="flex gap-1.5 overflow-x-auto mt-2 pb-1">
+              {POST_CATEGORIES.map((c) => (<button key={c.id} onClick={() => setCategory(c.id)} className="text-xs px-2.5 py-1 rounded-full shrink-0" style={{ backgroundColor: category === c.id ? T.accent : T.cardAlt, color: category === c.id ? T.onAccent : T.textMuted }}>{c.label}</button>))}
+            </div>
+            <div className="flex items-center justify-between mt-2">
+              <span className="text-xs" style={{ color: T.textMuted }}>{text.length}/280</span>
+              <button onClick={submitPost} disabled={!text.trim() || posting} className="flex items-center gap-1.5 text-xs px-4 py-2 rounded-full font-medium transition active:scale-95" style={{ backgroundColor: T.accent, color: T.onAccent, opacity: !text.trim() || posting ? 0.5 : 1 }}>
+                <Send size={13} /> {posting ? "Publicando..." : "Publicar"}
+              </button>
+            </div>
+          </div>
+
+          <div className="flex items-center justify-between">
+            <p className="text-xs uppercase tracking-wider" style={{ color: T.textMuted }}>Feed da comunidade</p>
+            <button onClick={load} className="flex items-center gap-1 text-xs transition active:scale-95" style={{ color: T.accent }}><RefreshCw size={12} /> Atualizar</button>
+          </div>
+
+          {status === "loading" ? (
+            <VerseSkeleton />
+          ) : visible.length === 0 ? (
+            <p className="text-xs text-center py-6 leading-relaxed" style={{ color: T.textMuted }}>Ainda não há publicações. Seja a primeira pessoa a compartilhar algo hoje.</p>
+          ) : (
+            <div className="space-y-2">
+              {visible.map((p) => {
+                const catLabel = (POST_CATEGORIES.find((c) => c.id === p.category) || {}).label || "";
+                const liked = likedPosts.has(p.id);
+                return (
+                  <div key={p.id} className="rounded-2xl p-3.5" style={{ backgroundColor: T.card, border: `1px solid ${T.border}` }}>
+                    <div className="flex items-center gap-2 mb-1.5">
+                      <div className="w-7 h-7 rounded-full flex items-center justify-center shrink-0 text-xs font-semibold" style={{ backgroundColor: T.cardAlt, color: T.accent }}>{(p.name || "A").charAt(0).toUpperCase()}</div>
+                      <div className="flex-1 min-w-0"><p className="text-xs font-medium truncate" style={{ color: T.text }}>{p.name}</p><p className="text-xs" style={{ color: T.textMuted }}>{catLabel} · {timeAgo(p.ts)}</p></div>
+                      <button onClick={() => { addFriend(p.name); setActiveChat(p.name); }} title="Conversar em particular" className="transition active:scale-95"><MessageCircle size={14} style={{ color: T.accent }} /></button>
+                      <button onClick={() => onHidePost(p.id)} title="Ocultar para mim"><EyeOff size={13} style={{ color: T.textMuted }} /></button>
+                    </div>
+                    <p className="text-sm leading-relaxed" style={{ color: T.text }}>{p.text}</p>
+                    <button onClick={() => like(p.id)} className="flex items-center gap-1.5 mt-2 transition active:scale-95">
+                      <Heart size={15} fill={liked ? T.accent : "none"} style={{ color: T.accent }} />
+                      <span className="text-xs" style={{ color: T.textMuted }}>{p.likes || 0}</span>
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -1748,6 +1934,11 @@ export default function App() {
 
   // Supabase auth listener
   useEffect(() => {
+    const isNative = typeof window !== "undefined" && window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform();
+    if (isNative) {
+      // Esconde a barra do sistema (bateria, hora, sinal) no app nativo
+      try { NativeStatusBar.hide(); } catch { /* web */ }
+    }
     if (!supabaseReady) return;
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (session) mapSupabaseUser(session.user);
@@ -1775,13 +1966,15 @@ export default function App() {
     return () => { subscription?.unsubscribe(); appListener?.remove(); };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const isNative = typeof window !== "undefined" && window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform();
+
   const inner = (
     <ThemeContext.Provider value={T}>
-      <div className="w-full flex items-center justify-center py-10 px-4" style={{ backgroundColor: T.canvas, fontFamily: "'Work Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" }}>
-        <div className="relative">
-          <div className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-96 h-96 rounded-full blur-3xl fd-pulse" style={{ background: `radial-gradient(circle, ${T.accent}30 0%, transparent 70%)` }} />
-          <div className="relative w-full max-w-sm rounded-3xl p-2 shadow-2xl" style={{ backgroundColor: T.bezel }}>
-            <div className="relative rounded-2xl overflow-hidden flex flex-col" style={{ backgroundColor: T.surface, height: 700 }}>
+      <div className="w-full flex items-center justify-center" style={{ backgroundColor: T.canvas, fontFamily: "'Work Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif", height: "100dvh", overflow: "hidden", padding: isNative ? 0 : "2.5rem 1rem" }}>
+        <div className="relative" style={isNative ? { width: "100%", height: "100%" } : {}}>
+          {!isNative && <div className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-96 h-96 rounded-full blur-3xl fd-pulse" style={{ background: `radial-gradient(circle, ${T.accent}30 0%, transparent 70%)` }} />}
+          <div className="relative w-full" style={isNative ? { height: "100%" } : { maxWidth: 384, margin: "0 auto", borderRadius: 24, padding: 8, backgroundColor: T.bezel, boxShadow: "0 25px 50px -12px rgba(0,0,0,0.5)" }}>
+            <div className="relative overflow-hidden flex flex-col" style={{ backgroundColor: T.surface, height: isNative ? "100%" : 700, borderRadius: isNative ? 0 : 16 }}>
               <StatusBar theme={themeName} onToggleTheme={toggleTheme} />
               {tab === "home" ? (
                 <div className="px-5 pt-1 pb-1 flex items-center gap-1.5">
