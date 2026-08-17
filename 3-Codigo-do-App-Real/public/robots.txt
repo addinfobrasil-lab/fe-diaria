@@ -1,0 +1,6 @@
+User-agent: *
+Allow: /
+Disallow: /app/mensagens
+Disallow: /app/perfil
+
+Sitemap: https://fediaria.app/sitemap.xml
