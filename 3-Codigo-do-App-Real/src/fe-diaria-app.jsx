@@ -9,7 +9,7 @@ import {
   Search, Play, ArrowRight, ShoppingBag, Sun, Moon, Bell, RotateCcw,
   Plus, Bookmark, Star, User, Crown, Volume2, VolumeX, Sparkles,
   MessageSquare, EyeOff, RefreshCw, Send, FileText, ShieldCheck,
-  ShieldAlert, Loader2, MapPin, LocateFixed, Share2,
+  ShieldAlert, Loader2, MapPin, LocateFixed, Share2, Lock,
 } from "lucide-react";
 
 /* ============================== THEME ============================== */
@@ -544,6 +544,22 @@ function AffiliateStrip() {
 }
 function MonetizationBlock() { return (<><AdBanner /><AffiliateStrip /></>); }
 
+function PremiumGate({ feature, onOpenPremium }) {
+  const T = useTheme();
+  return (
+    <div className="px-5 py-10 text-center">
+      <div className="w-14 h-14 rounded-2xl mx-auto mb-3 flex items-center justify-center" style={{ backgroundColor: T.accent + "22" }}>
+        <Lock size={24} style={{ color: T.accent }} />
+      </div>
+      <p className="fd-display text-base mb-1.5" style={{ color: T.text }}>Recurso Premium</p>
+      <p className="text-xs leading-relaxed mb-5 mx-auto" style={{ color: T.textMuted, maxWidth: 260 }}>{feature}</p>
+      <button onClick={onOpenPremium} className="rounded-full px-6 py-2.5 text-sm font-semibold transition active:scale-95 flex items-center justify-center gap-2 mx-auto" style={{ backgroundColor: T.accent, color: T.onAccent }}>
+        <Crown size={15} fill={T.onAccent} /> Virar Premium · R$ 9,90/mês
+      </button>
+    </div>
+  );
+}
+
 function BottomNav({ active, onChange }) {
   const T = useTheme();
   return (
@@ -653,18 +669,19 @@ function ReflectionModal({ question, text, setText, onClose }) {
   );
 }
 
-function PremiumModal({ isPremium, onBuy, onRestore, onClose }) {
+function PremiumModal({ isPremium, onBuy, onRestore, onClose, savedEmail }) {
   const T = useTheme();
   const [busy, setBusy] = useState(false);
-  const [verifyEmail, setVerifyEmail] = useState("");
+  const [verifyEmail, setVerifyEmail] = useState(savedEmail || "");
   const payMode = getPayMode();
   const benefits = [
     "Sem nenhum anúncio, em nenhuma tela",
-    "Acesso vitalício — pagamento único, sem assinatura",
-    "Continua com tudo: Bíblia, agenda, louvor e apoio",
+    "Acesso à IA: sugestão de passagem bíblica para o seu diário",
+    "Acesso ao Mural da Comunidade: posts, amigos e mensagens",
+    "Assinatura mensal — cancele quando quiser",
     "Ajuda a manter o projeto no ar",
   ];
-  const payLabel = payMode === "stripe" ? "Pagar com cartão (Stripe)" : payMode === "play" ? "Comprar na Google Play" : "Desbloquear Premium · R$ 12,00";
+  const payLabel = payMode === "stripe" ? "Assinar por R$ 9,90/mês (Stripe)" : payMode === "play" ? "Assinar na Google Play" : "Assinar Premium · R$ 9,90/mês";
 
   const handleBuy = async () => {
     setBusy(true);
@@ -673,14 +690,14 @@ function PremiumModal({ isPremium, onBuy, onRestore, onClose }) {
       if (mode !== "demo") {
         // Para Play e Stripe, a confirmação real acontece fora do app.
         alert(payMode === "stripe"
-          ? "Você será levado à página de pagamento do Stripe. Ao concluir, volte ao app e confirme o mesmo e-mail usado no pagamento."
-          : "A compra será concluída pela Google Play. Ao finalizar, o Premium ativa automaticamente.");
+          ? "Você será levado à página do Stripe para assinar. Ao concluir, volte ao app e confirme o mesmo e-mail usado no pagamento."
+          : "A assinatura será concluída pela Google Play. Ao finalizar, o Premium ativa automaticamente.");
         if (payMode === "play") onBuy();
       } else {
         onBuy();
       }
     } catch (e) {
-      alert("Não foi possível concluir a compra. " + (e?.message || "Tente novamente."));
+      alert("Não foi possível concluir a assinatura. " + (e?.message || "Tente novamente."));
     } finally { setBusy(false); }
   };
 
@@ -691,10 +708,10 @@ function PremiumModal({ isPremium, onBuy, onRestore, onClose }) {
     try {
       const paid = await verifyStripePurchase(email);
       if (paid) {
-        onBuy();
-        alert("Pagamento confirmado! Premium ativo. 💛");
+        onBuy(email);
+        alert("Assinatura confirmada! Premium ativo. 💛");
       } else {
-        alert("Ainda não encontramos uma compra para esse e-mail. Confirme se digitou o mesmo e-mail usado no pagamento e tente de novo em alguns segundos.");
+        alert("Ainda não encontramos uma assinatura ativa para esse e-mail. Confirme se digitou o mesmo e-mail usado no pagamento e tente de novo em alguns segundos.");
       }
     } finally { setBusy(false); }
   };
@@ -737,7 +754,7 @@ function PremiumModal({ isPremium, onBuy, onRestore, onClose }) {
           </>
         ) : (
           <>
-            <p className="text-sm mb-4 leading-relaxed" style={{ color: T.text }}>Uma experiência mais tranquila, sem interrupções, com um único pagamento — não é assinatura.</p>
+            <p className="text-sm mb-4 leading-relaxed" style={{ color: T.text }}>Uma experiência completa e sem interrupções, com um preço de café por mês — cancele quando quiser.</p>
             <div className="text-left space-y-2 mb-5">
               {benefits.map((b, i) => (
                 <div key={i} className="flex items-start gap-2.5">
@@ -753,14 +770,14 @@ function PremiumModal({ isPremium, onBuy, onRestore, onClose }) {
             </button>
             <p className="text-xs mt-3 leading-relaxed" style={{ color: T.textMuted }}>
               {payMode === "play"
-                ? "Pagamento pela Google Play (R$ 12,00). A compra ativa automaticamente assim que confirmada."
+                ? "Assinatura mensal pela Google Play (R$ 9,90/mês). Renova automaticamente e você pode cancelar quando quiser."
                 : payMode === "stripe"
-                  ? "Pagamento por cartão via Stripe (R$ 12,00). O link abre no navegador — sem precisar da Play Store."
-                  : "Sistema de pagamento ainda não configurado. Configure VITE_REVENUECAT_API_KEY (Google Play) ou VITE_STRIPE_PAYMENT_LINK para cobrança real. Por enquanto, a compra é apenas simulada para testes."}
+                  ? "Assinatura mensal por cartão via Stripe (R$ 9,90/mês). O link abre no navegador — sem precisar da Play Store."
+                  : "Sistema de pagamento ainda não configurado. Configure VITE_REVENUECAT_API_KEY (Google Play) ou VITE_STRIPE_PAYMENT_LINK para cobrança real. Por enquanto, a assinatura é apenas simulada para testes."}
             </p>
             {payMode === "stripe" && (
               <div className="mt-5 pt-4 border-t" style={{ borderColor: T.border }}>
-                <p className="text-xs font-medium mb-2" style={{ color: T.text }}>Já pagou? Ative o Premium:</p>
+                <p className="text-xs font-medium mb-2" style={{ color: T.text }}>Já assinou? Ative o Premium:</p>
                 <div className="flex gap-2">
                   <input
                     value={verifyEmail}
@@ -1201,7 +1218,7 @@ function MusicScreen({ favorites, toggleFavorite, songOfDay, isPremium }) {
   );
 }
 
-function AgendaScreen({ completedDays, toggleDay, tasks, addTask, toggleTask, removeTask, journalText, setJournalText, journalSuggestion, setJournalSuggestion, onGoToPassage, isPremium }) {
+function AgendaScreen({ completedDays, toggleDay, tasks, addTask, toggleTask, removeTask, journalText, setJournalText, journalSuggestion, setJournalSuggestion, onGoToPassage, isPremium, onOpenPremium }) {
   const T = useTheme();
   const [monthOffset, setMonthOffset] = useState(0);
   const [taskInput, setTaskInput] = useState("");
@@ -1220,6 +1237,7 @@ function AgendaScreen({ completedDays, toggleDay, tasks, addTask, toggleTask, re
 
   const askAI = async () => {
     if (!journalText.trim() || aiStatus === "loading") return;
+    if (!isPremium) { onOpenPremium(); return; }
     setAiStatus("loading");
     try {
       const suggestion = await askAIForPassage(journalText.trim());
@@ -1278,8 +1296,8 @@ function AgendaScreen({ completedDays, toggleDay, tasks, addTask, toggleTask, re
         <h3 className="fd-display text-sm mb-1" style={{ color: T.text }}>Diário do dia</h3>
         <p className="text-xs mb-2.5" style={{ color: T.textMuted }}>Como foi o seu dia? Escreva livremente.</p>
         <textarea value={journalText} onChange={(e) => setJournalText(e.target.value)} rows={5} placeholder="Hoje eu..." className="w-full rounded-2xl p-3.5 text-sm outline-none resize-none" style={{ backgroundColor: T.card, color: T.text, border: `1px solid ${T.border}` }} />
-        <button onClick={askAI} disabled={!journalText.trim() || aiStatus === "loading"} className="w-full mt-2.5 rounded-full py-2.5 text-sm font-medium flex items-center justify-center gap-2 transition active:scale-95" style={{ backgroundColor: T.accent, color: T.onAccent, opacity: !journalText.trim() || aiStatus === "loading" ? 0.5 : 1 }}>
-          <Sparkles size={15} /> {aiStatus === "loading" ? "Lendo com carinho..." : "Pedir sugestão da IA"}
+        <button onClick={askAI} disabled={!journalText.trim() || aiStatus === "loading"} className="w-full mt-2.5 rounded-full py-2.5 text-sm font-medium flex items-center justify-center gap-2 transition active:scale-95" style={{ backgroundColor: isPremium ? T.accent : T.cardAlt, color: isPremium ? T.onAccent : T.text, opacity: !journalText.trim() || aiStatus === "loading" ? 0.5 : 1, border: isPremium ? "none" : `1px solid ${T.border}` }}>
+          {isPremium ? <Sparkles size={15} /> : <Lock size={13} />} {aiStatus === "loading" ? "Lendo com carinho..." : isPremium ? "Pedir sugestão da IA" : "Sugestão da IA · Premium"}
         </button>
 
         {aiStatus === "loading" && (
@@ -1496,7 +1514,7 @@ function HelpScreen({ isPremium, onOpenPremium, soundOn, onToggleSound, onOpenTe
           <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0" style={{ backgroundColor: T.accent + "26" }}>
             <Crown size={17} style={{ color: T.accent }} fill={isPremium ? T.accent : "none"} />
           </div>
-          <div className="text-left flex-1"><p className="text-sm font-medium" style={{ color: T.text }}>{isPremium ? "Você é Premium" : "Virar Premium"}</p><p className="text-xs" style={{ color: T.textMuted }}>{isPremium ? "Obrigado por apoiar o projeto 💛" : "Sem anúncios · pagamento único de R$ 12,00"}</p></div>
+          <div className="text-left flex-1"><p className="text-sm font-medium" style={{ color: T.text }}>{isPremium ? "Você é Premium" : "Virar Premium"}</p><p className="text-xs" style={{ color: T.textMuted }}>{isPremium ? "Obrigado por apoiar o projeto 💛" : "Sem anúncios · assinatura de R$ 9,90/mês"}</p></div>
           {!isPremium && <ArrowRight size={16} style={{ color: T.accent }} />}
         </button>
       </div>
@@ -1941,6 +1959,7 @@ export default function App() {
   const [ready, setReady] = useState(false);
   const [themeName, setThemeName] = useState("dark");
   const [isPremium, setIsPremium] = useState(false);
+  const [stripeEmail, setStripeEmail] = useState("");
   const [completedDays, setCompletedDays] = useState(() => new Set());
   const [favorites, setFavorites] = useState(() => new Set());
   const [prayedDates, setPrayedDates] = useState(() => new Set());
@@ -1993,6 +2012,7 @@ export default function App() {
           const d = JSON.parse(res.value);
           if (d.theme) setThemeName(d.theme);
           if (d.isPremium) setIsPremium(true);
+          if (d.stripeEmail) setStripeEmail(d.stripeEmail);
           if (Array.isArray(d.completedDays)) setCompletedDays(new Set(d.completedDays));
           if (Array.isArray(d.favorites)) setFavorites(new Set(d.favorites));
           if (Array.isArray(d.prayedDates)) setPrayedDates(new Set(d.prayedDates));
@@ -2015,12 +2035,28 @@ export default function App() {
     return () => { cancelled = true; };
   }, []);
 
+  // Auto-verificação da assinatura Stripe: se o e-mail verificado foi salvo,
+  // confirma periodicamente que a assinatura segue ativa e revoga o Premium
+  // caso tenha sido cancelada/expirada no Stripe.
+  useEffect(() => {
+    if (!ready || !isPremium || !stripeEmail) return;
+    if (getPayMode() !== "stripe") return;
+    let cancelled = false;
+    const check = async () => {
+      const paid = await verifyStripePurchase(stripeEmail);
+      if (!cancelled && !paid) setIsPremium(false);
+    };
+    check();
+    const id = setInterval(check, 10 * 60 * 1000); // a cada 10 min
+    return () => { cancelled = true; clearInterval(id); };
+  }, [ready, isPremium, stripeEmail]);
+
   useEffect(() => {
     if (!ready) return;
     const t = setTimeout(async () => {
       try {
         await window.storage.set(STORE_KEY, JSON.stringify({
-          theme: themeName, isPremium,
+          theme: themeName, isPremium, stripeEmail,
           completedDays: Array.from(completedDays), favorites: Array.from(favorites),
           prayedDates: Array.from(prayedDates), reflections, tasks,
           lastRead, favoriteVerses, user, soundOn,
@@ -2031,7 +2067,7 @@ export default function App() {
       } catch { /* ignore write errors */ }
     }, 450);
     return () => clearTimeout(t);
-  }, [ready, themeName, isPremium, completedDays, favorites, prayedDates, reflections, tasks, lastRead, favoriteVerses, user, soundOn, journalEntries, journalSuggestions, hiddenPosts, likedPosts, termsAccepted, ageBracket]);
+  }, [ready, themeName, isPremium, completedDays, favorites, prayedDates, reflections, tasks, lastRead, favoriteVerses, user, soundOn, journalEntries, journalSuggestions, hiddenPosts, likedPosts, termsAccepted, ageBracket, stripeEmail]);
 
   const toggleDay = (d) => setCompletedDays((prev) => { const n = new Set(prev); if (n.has(d)) { n.delete(d); } else { n.add(d); playChime(soundOn); } return n; });
   const toggleFavorite = (id) => setFavorites((prev) => { const n = new Set(prev); if (n.has(id)) { n.delete(id); } else { n.add(id); playChime(soundOn, "favorite"); } return n; });
@@ -2160,8 +2196,10 @@ export default function App() {
                 {tab === "home" && <HomeScreen verse={verse} onOpen={setModal} doneCount={completedDays.size} isPremium={isPremium} songOfDay={songOfDay} onGoLouvor={() => setTab("louvor")} lastRead={lastRead} onContinueReading={continueReading} user={user} onOpenProfile={() => setModal("profile")} />}
                 {tab === "biblia" && <BibleScreen book={bibleBook} setBook={setBibleBook} chapter={bibleChapter} setChapter={setBibleChapter} cache={bibleCache} setCache={setBibleCache} version={bibleVersion} setVersion={setBibleVersion} favoriteVerses={favoriteVerses} toggleFavoriteVerse={toggleFavoriteVerse} lastRead={lastRead} onMarkLastRead={markLastRead} isPremium={isPremium} />}
                 {tab === "louvor" && <MusicScreen favorites={favorites} toggleFavorite={toggleFavorite} songOfDay={songOfDay} isPremium={isPremium} />}
-                {tab === "agenda" && <AgendaScreen completedDays={completedDays} toggleDay={toggleDay} tasks={tasks} addTask={addTask} toggleTask={toggleTask} removeTask={removeTask} journalText={journalText} setJournalText={setJournalText} journalSuggestion={journalSuggestion} setJournalSuggestion={setJournalSuggestion} onGoToPassage={onGoToPassage} isPremium={isPremium} />}
-                {tab === "mural" && (isAdult ? <CommunityScreen user={user} hiddenPosts={hiddenPosts} onHidePost={onHidePost} likedPosts={likedPosts} onToggleLike={onToggleLike} /> : (
+                {tab === "agenda" && <AgendaScreen completedDays={completedDays} toggleDay={toggleDay} tasks={tasks} addTask={addTask} toggleTask={toggleTask} removeTask={removeTask} journalText={journalText} setJournalText={setJournalText} journalSuggestion={journalSuggestion} setJournalSuggestion={setJournalSuggestion} onGoToPassage={onGoToPassage} isPremium={isPremium} onOpenPremium={() => setModal("premium")} />}
+                {tab === "mural" && (!isPremium ? (
+                  <PremiumGate feature="O Mural da Comunidade conecta você a outros leitores: publique testemunhos, envie mensagens privadas e forme amizades." onOpenPremium={() => setModal("premium")} />
+                ) : isAdult ? <CommunityScreen user={user} hiddenPosts={hiddenPosts} onHidePost={onHidePost} likedPosts={likedPosts} onToggleLike={onToggleLike} /> : (
                   <div className="px-5 py-8 text-center">
                     <ShieldAlert size={28} style={{ color: T.accent }} className="mx-auto mb-3" />
                     <p className="text-sm font-medium mb-1.5" style={{ color: T.text }}>Disponível para maiores de 18</p>
@@ -2177,7 +2215,7 @@ export default function App() {
               {modal === "oracao" && <PrayerModal prayer={prayer} prayed={prayedToday} onMarkPrayed={markPrayed} onClose={() => setModal(null)} />}
               {modal === "momento" && <MomentModal moment={moment} onClose={() => setModal(null)} />}
               {modal === "reflexao" && <ReflectionModal question={reflection} text={reflectionText} setText={setReflectionText} onClose={() => setModal(null)} />}
-              {modal === "premium" && <PremiumModal isPremium={isPremium} onBuy={() => { setIsPremium(true); playChime(soundOn, "premium"); }} onRestore={() => setIsPremium(false)} onClose={() => setModal(null)} />}
+              {modal === "premium" && <PremiumModal isPremium={isPremium} savedEmail={stripeEmail} onBuy={(email) => { if (email) setStripeEmail(email); setIsPremium(true); playChime(soundOn, "premium"); }} onRestore={() => { setIsPremium(false); setStripeEmail(""); }} onClose={() => setModal(null)} />}
               {modal === "profile" && <ProfileModal user={user} onSignIn={(n) => { signIn(n); setModal(null); }} onSignOut={() => { signOut(); setModal(null); }} onClose={() => setModal(null)} />}
               {modal === "terms" && <TermsModal onAccept={() => setModal(null)} onClose={() => setModal(null)} canDismiss={true} />}
 
