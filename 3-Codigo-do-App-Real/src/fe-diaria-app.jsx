@@ -1397,27 +1397,62 @@ function ChurchFinder() {
       const addr = geoData.address || {};
       setCityName(addr.city || addr.town || addr.village || addr.county || "sua região");
 
-      // Busca igrejas próximas (grátis, OpenStreetMap Overpass API)
-      const query = `[out:json][timeout:25];(node["amenity"="place_of_worship"]["religion"="christian"](around:6000,${lat},${lon});way["amenity"="place_of_worship"]["religion"="christian"](around:6000,${lat},${lon}););out center 25;`;
-      const opRes = await fetch("https://overpass-api.de/api/interpreter", { method: "POST", body: query });
-      if (!opRes.ok) throw new Error("overpass status " + opRes.status);
-      const opData = await opRes.json();
+      // Busca igrejas próximas (grátis, OpenStreetMap Overpass API).
+      // Não filtra religion na query porque muitas igrejas (sobretudo no Brasil)
+      // não têm a tag "religion=christian" — a filtragem é feita no cliente.
+      // O raio é 8 km e o limite alto para não cortar igrejas próximas;
+      // a ordenação por distância e o corte para 20 ficam no cliente.
+      const query = `[out:json][timeout:40];(node["amenity"="place_of_worship"](around:8000,${lat},${lon});way["amenity"="place_of_worship"](around:8000,${lat},${lon});relation["amenity"="place_of_worship"](around:8000,${lat},${lon}););out center 150;`;
+      // Vários servidores Overpass para redundância (o público tem rate limit).
+      const overpassServers = [
+        "https://overpass-api.de/api/interpreter",
+        "https://overpass.kumi.systems/api/interpreter",
+        "https://overpass.private.coffee/api/interpreter",
+      ];
+      let opData = null;
+      for (const server of overpassServers) {
+        try {
+          const opRes = await fetch(server, { method: "POST", body: query });
+          if (opRes.ok) {
+            opData = await opRes.json();
+            break;
+          }
+        } catch { /* tenta o próximo servidor */ }
+      }
+      if (!opData) throw new Error("overpass falhou em todos os servidores");
+      // Religiões que não são cristãs — ignoradas; igrejas sem tag religiosa entram.
+      const NON_CHRISTIAN = new Set(["muslim", "jewish", "buddhist", "hindu", "sikh", "shinto", "taoist", "bahai", "animist", "hinduism", "islam", "judaism", "buddhism"]);
+      const DENOM_LABELS = {
+        catholic: "Católica", evangelical: "Evangélica", protestant: "Protestante",
+        pentecostal: "Pentecostal", baptist: "Batista", methodist: "Metodista",
+        lutheran: "Luterana", presbyterian: "Presbiteriana", anglican: "Anglicana",
+        adventist: "Adventista", orthodox: "Ortodoxa", mormon: "A Igreja de Jesus Cristo dos S.U.T.",
+        "jehovahs_witness": "Testemunhas de Jeová", assembly_of_god: "Assembleia de Deus",
+        neo_pentecostal: "Neopentecostal", universal_church: "Igreja Universal",
+      };
+      const describe = (c) => {
+        if (c.denomination) return DENOM_LABELS[c.denomination] || c.denomination;
+        if (c.religion === "christian" && !c.name) return "Igreja cristã";
+        return "";
+      };
       const list = (opData.elements || [])
         .map((el) => {
+          const religion = el.tags?.religion || "";
+          if (NON_CHRISTIAN.has(religion)) return null;
           const elLat = el.lat ?? el.center?.lat;
           const elLon = el.lon ?? el.center?.lon;
           if (!elLat || !elLon) return null;
           return {
-            id: el.id,
+            id: `${el.type}-${el.id}`,
             name: el.tags?.name || "Igreja",
-            denomination: el.tags?.denomination || "",
+            denomination: describe({ denomination: el.tags?.denomination || "", religion, name: el.tags?.name }),
             lat: elLat, lon: elLon,
             distanceKm: haversineKm(lat, lon, elLat, elLon),
           };
         })
         .filter(Boolean)
         .sort((a, b) => a.distanceKm - b.distanceKm)
-        .slice(0, 12);
+        .slice(0, 20);
       setChurches(list);
       setStatus("done");
     } catch {
@@ -1451,9 +1486,13 @@ function ChurchFinder() {
       )}
       {status === "done" && (
         <div className="mt-2">
-          <p className="text-xs mb-2" style={{ color: T.textMuted }}>Perto de {cityName}:</p>
+          <p className="text-xs mb-2" style={{ color: T.textMuted }}>
+            {churches.length > 0
+              ? `${churches.length} igrejas a menos de 8 km de ${cityName}:`
+              : "Perto de " + cityName + ":"}
+          </p>
           {churches.length === 0 ? (
-            <p className="text-xs" style={{ color: T.textMuted }}>Nenhuma igreja encontrada no mapa aberto (OpenStreetMap) perto de você ainda — a base de dados é colaborativa e pode ter lacunas na sua região.</p>
+            <p className="text-xs" style={{ color: T.textMuted }}>Nenhuma igreja encontrada no mapa aberto (OpenStreetMap) perto de você ainda — a base de dados é colaborativa e pode ter lacunas na sua região. Tente novamente mais tarde.</p>
           ) : (
             <div className="space-y-1.5">
               {churches.map((c) => (
