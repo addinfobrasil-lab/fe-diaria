@@ -1,5 +1,6 @@
 import { useState, useEffect, createContext, useContext } from "react";
 import { supabase } from "./lib/supabaseClient.js";
+import { buyPremium as buyPremiumFlow, getPayMode, checkEntitlement } from "./lib/payments.js";
 import { BIBLE_FALLBACK } from "./data/bible-fallback.js";
 import { StatusBar as NativeStatusBar } from "@capacitor/status-bar";
 import {
@@ -654,12 +655,35 @@ function ReflectionModal({ question, text, setText, onClose }) {
 
 function PremiumModal({ isPremium, onBuy, onRestore, onClose }) {
   const T = useTheme();
+  const [busy, setBusy] = useState(false);
+  const payMode = getPayMode();
   const benefits = [
     "Sem nenhum anúncio, em nenhuma tela",
     "Acesso vitalício — pagamento único, sem assinatura",
     "Continua com tudo: Bíblia, agenda, louvor e apoio",
     "Ajuda a manter o projeto no ar",
   ];
+  const payLabel = payMode === "stripe" ? "Pagar com cartão (Stripe)" : payMode === "play" ? "Comprar na Google Play" : "Desbloquear Premium · R$ 12,00";
+
+  const handleBuy = async () => {
+    setBusy(true);
+    try {
+      const { mode } = await buyPremiumFlow();
+      if (mode !== "demo") {
+        // Para Play e Stripe, a confirmação real acontece fora do app.
+        // Ativamos aqui apenas após confirmação manual/entitlement na próxima abertura.
+        alert(payMode === "stripe"
+          ? "Você será levado à página de pagamento do Stripe. Ao concluir, volte ao app e toque em 'Já paguei' se o Premium não ativar automaticamente."
+          : "A compra será concluída pela Google Play. Ao finalizar, o Premium ativa automaticamente.");
+        if (payMode === "play") onBuy();
+      } else {
+        onBuy();
+      }
+    } catch (e) {
+      alert("Não foi possível concluir a compra. " + (e?.message || "Tente novamente."));
+    } finally { setBusy(false); }
+  };
+
   return (
     <Modal title={isPremium ? "Fé Diária Premium" : "Fé Diária Premium"} onClose={onClose}>
       <div className="text-center py-1">
@@ -670,7 +694,14 @@ function PremiumModal({ isPremium, onBuy, onRestore, onClose }) {
           <>
             <p className="text-sm font-medium" style={{ color: T.text }}>Você já é Premium. Obrigado por apoiar este projeto! 💛</p>
             <p className="text-xs mt-1.5" style={{ color: T.textMuted }}>Todos os anúncios foram removidos, para sempre.</p>
-            <button onClick={onRestore} className="mt-4 text-xs underline" style={{ color: T.textMuted }}>Restaurar anúncios (modo demonstração)</button>
+            {payMode === "play" && (
+              <button onClick={async () => { setBusy(true); try { if (await checkEntitlement()) { onBuy(); alert("Compra confirmada! Premium ativo."); } else { alert("Nenhuma compra encontrada nesta conta."); } } finally { setBusy(false); } }} disabled={busy} className="mt-4 text-xs underline" style={{ color: T.textMuted }}>
+                {busy ? "Verificando..." : "Já paguei — verificar compra"}
+              </button>
+            )}
+            {payMode !== "play" && (
+              <button onClick={onRestore} className="mt-4 text-xs underline" style={{ color: T.textMuted }}>Restaurar anúncios (modo demonstração)</button>
+            )}
           </>
         ) : (
           <>
@@ -685,10 +716,16 @@ function PremiumModal({ isPremium, onBuy, onRestore, onClose }) {
                 </div>
               ))}
             </div>
-            <button onClick={onBuy} className="w-full rounded-full py-3 font-semibold text-sm transition active:scale-95 flex items-center justify-center gap-2" style={{ backgroundColor: T.accent, color: T.onAccent }}>
-              <Crown size={15} fill={T.onAccent} /> Desbloquear Premium · R$ 12,00
+            <button onClick={handleBuy} disabled={busy} className="w-full rounded-full py-3 font-semibold text-sm transition active:scale-95 flex items-center justify-center gap-2" style={{ backgroundColor: T.accent, color: T.onAccent, opacity: busy ? 0.6 : 1 }}>
+              <Crown size={15} fill={T.onAccent} /> {busy ? "Aguarde..." : payLabel}
             </button>
-            <p className="text-xs mt-3 leading-relaxed" style={{ color: T.textMuted }}>Sistema de pagamento ainda não integrado. Em produção, este botão abriria o checkout da Google Play (billing) com o valor de R$ 12,00. Por enquanto, a compra é apenas simulada para testes.</p>
+            <p className="text-xs mt-3 leading-relaxed" style={{ color: T.textMuted }}>
+              {payMode === "play"
+                ? "Pagamento pela Google Play (R$ 12,00). A compra ativa automaticamente assim que confirmada."
+                : payMode === "stripe"
+                  ? "Pagamento por cartão via Stripe (R$ 12,00). O link abre no navegador — sem precisar da Play Store."
+                  : "Sistema de pagamento ainda não configurado. Configure VITE_REVENUECAT_API_KEY (Google Play) ou VITE_STRIPE_PAYMENT_LINK para cobrança real. Por enquanto, a compra é apenas simulada para testes."}
+            </p>
           </>
         )}
       </div>

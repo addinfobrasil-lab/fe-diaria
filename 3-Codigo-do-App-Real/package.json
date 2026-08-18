@@ -17,6 +17,7 @@
     "@capacitor/local-notifications": "^6.0.0",
     "@capacitor/share": "^6.0.0",
     "@capacitor/status-bar": "^6.0.0",
+    "@revenuecat/purchases-capacitor": "^9.0.0",
     "@supabase/supabase-js": "^2.45.0",
     "lucide-react": "^0.400.0",
     "react": "^18.3.1",
