@@ -20,6 +20,11 @@
 const hasRCKey = () => !!import.meta.env.VITE_REVENUECAT_API_KEY;
 const productId = () => import.meta.env.VITE_REVENUECAT_PRODUCT_ID || "fe_diaria_premium";
 const stripeLink = () => import.meta.env.VITE_STRIPE_PAYMENT_LINK || "";
+// URL da Edge Function do Supabase que valida a compra (webhook Stripe).
+const stripeVerifyUrl = () => {
+  const base = import.meta.env.VITE_SUPABASE_URL || "";
+  return base ? `${base}/functions/v1/stripe-purchase/verify` : "";
+};
 
 let purchases = null;
 function getPurchases() {
@@ -75,6 +80,29 @@ export async function checkEntitlement() {
     await Purchases.configure({ apiKey: import.meta.env.VITE_REVENUECAT_API_KEY, appUserID: null });
     const info = await Purchases.getCustomerInfo();
     return !!info?.entitlements?.active?.premium;
+  } catch {
+    return false;
+  }
+}
+
+// Consulta a Edge Function do Supabase para confirmar se o e-mail informado
+// possui uma compra paga registrada pelo webhook do Stripe.
+export async function verifyStripePurchase(email) {
+  const url = stripeVerifyUrl();
+  if (!url) return false;
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        // A Edge Function exige JWT (verify_jwt). A anon key funciona como Bearer.
+        Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY || ""}`,
+      },
+      body: JSON.stringify({ email }),
+    });
+    if (!res.ok) return false;
+    const data = await res.json();
+    return !!data?.paid;
   } catch {
     return false;
   }

@@ -1,6 +1,6 @@
 import { useState, useEffect, createContext, useContext } from "react";
 import { supabase } from "./lib/supabaseClient.js";
-import { buyPremium as buyPremiumFlow, getPayMode, checkEntitlement } from "./lib/payments.js";
+import { buyPremium as buyPremiumFlow, getPayMode, checkEntitlement, verifyStripePurchase } from "./lib/payments.js";
 import { BIBLE_FALLBACK } from "./data/bible-fallback.js";
 import { StatusBar as NativeStatusBar } from "@capacitor/status-bar";
 import {
@@ -656,6 +656,7 @@ function ReflectionModal({ question, text, setText, onClose }) {
 function PremiumModal({ isPremium, onBuy, onRestore, onClose }) {
   const T = useTheme();
   const [busy, setBusy] = useState(false);
+  const [verifyEmail, setVerifyEmail] = useState("");
   const payMode = getPayMode();
   const benefits = [
     "Sem nenhum anúncio, em nenhuma tela",
@@ -671,9 +672,8 @@ function PremiumModal({ isPremium, onBuy, onRestore, onClose }) {
       const { mode } = await buyPremiumFlow();
       if (mode !== "demo") {
         // Para Play e Stripe, a confirmação real acontece fora do app.
-        // Ativamos aqui apenas após confirmação manual/entitlement na próxima abertura.
         alert(payMode === "stripe"
-          ? "Você será levado à página de pagamento do Stripe. Ao concluir, volte ao app e toque em 'Já paguei' se o Premium não ativar automaticamente."
+          ? "Você será levado à página de pagamento do Stripe. Ao concluir, volte ao app e confirme o mesmo e-mail usado no pagamento."
           : "A compra será concluída pela Google Play. Ao finalizar, o Premium ativa automaticamente.");
         if (payMode === "play") onBuy();
       } else {
@@ -681,6 +681,21 @@ function PremiumModal({ isPremium, onBuy, onRestore, onClose }) {
       }
     } catch (e) {
       alert("Não foi possível concluir a compra. " + (e?.message || "Tente novamente."));
+    } finally { setBusy(false); }
+  };
+
+  const handleVerifyStripe = async () => {
+    const email = verifyEmail.trim();
+    if (!email) { alert("Digite o e-mail usado no pagamento."); return; }
+    setBusy(true);
+    try {
+      const paid = await verifyStripePurchase(email);
+      if (paid) {
+        onBuy();
+        alert("Pagamento confirmado! Premium ativo. 💛");
+      } else {
+        alert("Ainda não encontramos uma compra para esse e-mail. Confirme se digitou o mesmo e-mail usado no pagamento e tente de novo em alguns segundos.");
+      }
     } finally { setBusy(false); }
   };
 
@@ -699,7 +714,24 @@ function PremiumModal({ isPremium, onBuy, onRestore, onClose }) {
                 {busy ? "Verificando..." : "Já paguei — verificar compra"}
               </button>
             )}
-            {payMode !== "play" && (
+            {payMode === "stripe" && (
+              <div className="mt-4">
+                <div className="flex gap-2">
+                  <input
+                    value={verifyEmail}
+                    onChange={(e) => setVerifyEmail(e.target.value)}
+                    type="email"
+                    placeholder="E-mail usado no pagamento"
+                    className="flex-1 min-w-0 rounded-xl px-3 py-2.5 text-xs outline-none"
+                    style={{ backgroundColor: T.cardAlt, color: T.text, border: `1px solid ${T.border}` }}
+                  />
+                  <button onClick={handleVerifyStripe} disabled={busy} className="shrink-0 rounded-xl px-3.5 text-xs font-semibold transition active:scale-95" style={{ backgroundColor: T.accent, color: T.onAccent, opacity: busy ? 0.6 : 1 }}>
+                    {busy ? "..." : "Verificar"}
+                  </button>
+                </div>
+              </div>
+            )}
+            {payMode !== "play" && payMode !== "stripe" && (
               <button onClick={onRestore} className="mt-4 text-xs underline" style={{ color: T.textMuted }}>Restaurar anúncios (modo demonstração)</button>
             )}
           </>
@@ -726,6 +758,24 @@ function PremiumModal({ isPremium, onBuy, onRestore, onClose }) {
                   ? "Pagamento por cartão via Stripe (R$ 12,00). O link abre no navegador — sem precisar da Play Store."
                   : "Sistema de pagamento ainda não configurado. Configure VITE_REVENUECAT_API_KEY (Google Play) ou VITE_STRIPE_PAYMENT_LINK para cobrança real. Por enquanto, a compra é apenas simulada para testes."}
             </p>
+            {payMode === "stripe" && (
+              <div className="mt-5 pt-4 border-t" style={{ borderColor: T.border }}>
+                <p className="text-xs font-medium mb-2" style={{ color: T.text }}>Já pagou? Ative o Premium:</p>
+                <div className="flex gap-2">
+                  <input
+                    value={verifyEmail}
+                    onChange={(e) => setVerifyEmail(e.target.value)}
+                    type="email"
+                    placeholder="E-mail usado no pagamento"
+                    className="flex-1 min-w-0 rounded-xl px-3 py-2.5 text-xs outline-none"
+                    style={{ backgroundColor: T.cardAlt, color: T.text, border: `1px solid ${T.border}` }}
+                  />
+                  <button onClick={handleVerifyStripe} disabled={busy} className="shrink-0 rounded-xl px-3.5 text-xs font-semibold transition active:scale-95" style={{ backgroundColor: T.accent, color: T.onAccent, opacity: busy ? 0.6 : 1 }}>
+                    {busy ? "..." : "Ativar"}
+                  </button>
+                </div>
+              </div>
+            )}
           </>
         )}
       </div>
