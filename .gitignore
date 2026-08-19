@@ -1,2 +1,4 @@
 
 .tmp-apk/
+# APKs nunca devem ser versionados (contêm chaves embutidas)
+*.apk
