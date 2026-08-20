@@ -28,8 +28,7 @@ jobs:
       - name: Criar .env.local com as chaves
         working-directory: 3-Codigo-do-App-Real
         run: |
-          echo "VITE_GEMINI_API_KEY=${{ secrets.VITE_GEMINI_API_KEY }}" > .env.local
-          echo "VITE_SUPABASE_URL=${{ secrets.VITE_SUPABASE_URL }}" >> .env.local
+          echo "VITE_SUPABASE_URL=${{ secrets.VITE_SUPABASE_URL }}" > .env.local
           echo "VITE_SUPABASE_ANON_KEY=${{ secrets.VITE_SUPABASE_ANON_KEY }}" >> .env.local
           echo "VITE_ADMOB_BANNER_ID=${{ secrets.VITE_ADMOB_BANNER_ID }}" >> .env.local
           echo "VITE_REVENUECAT_API_KEY=${{ secrets.VITE_REVENUECAT_API_KEY }}" >> .env.local

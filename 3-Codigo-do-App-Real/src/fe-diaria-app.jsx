@@ -361,58 +361,43 @@ async function shareText(text, title) {
   } catch { /* usuário cancelou ou sem suporte */ }
 }
 
-// Uses Google Gemini (free tier, no credit card required) to suggest a Bible passage
-// based on what the person wrote in their journal. Get a free key at aistudio.google.com/apikey
-// and add VITE_GEMINI_API_KEY=... to .env.local.
-async function askAIForPassage(journalText) {
-  const key = typeof import.meta !== 'undefined' ? import.meta.env.VITE_GEMINI_API_KEY : null;
-  if (!key) throw new Error("Chave da API Gemini não configurada. Adicione VITE_GEMINI_API_KEY ao .env.local");
-
-  const prompt = `Você é um assistente devocional gentil, acolhedor e prudente dentro de um app cristão. A pessoa escreveu livremente sobre como foi o seu dia. Leia com atenção e responda SOMENTE com um JSON válido — sem markdown, sem crases, sem texto antes ou depois — exatamente neste formato:
-{"reflexao":"uma frase curta e acolhedora reconhecendo o que a pessoa viveu, sem julgar e sem diagnosticar nada, no máximo 2 frases","livro":"nome de um livro da Bíblia em português","capitulo":numero_do_capitulo_como_inteiro,"versiculo":"número ou intervalo de versículo, ou null se for o capítulo inteiro","motivo":"uma frase curta explicando por que essa passagem se conecta ao que a pessoa escreveu"}
-
-Se o texto sugerir que a pessoa está em risco ou em crise, priorize acolhimento e, no campo "reflexao", gentilmente sugira que converse com alguém de confiança ou um profissional, mantendo ainda assim o formato JSON pedido.
-
-Texto da pessoa:
-"""${journalText}"""`;
-
-  const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent?key=${key}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      contents: [{ parts: [{ text: prompt }] }],
-      generationConfig: { response_mime_type: "application/json", maxOutputTokens: 1000 },
-    }),
-  });
-  if (!response.ok) throw new Error("Gemini API status " + response.status);
-  const data = await response.json();
-  const raw = (data?.candidates?.[0]?.content?.parts ?? []).map((p) => p.text ?? "").join("").replace(/```json|```/g, "").trim();
-  return JSON.parse(raw);
+// Uses Google Gemini via a Supabase Edge Function (the API key stays on the
+// server, never in the app bundle). Call the function directly:
+//   POST {supabaseUrl}/functions/v1/gemini/generate
+// The anon key is only needed as the Authorization header for the function.
+function geminiUrl(path) {
+  const base = import.meta.env.VITE_SUPABASE_URL || "";
+  return base ? `${base}/functions/v1/gemini/${path}` : "";
 }
 
-// Uses Google Gemini (free tier) to moderate community posts before publishing.
-async function moderateText(text) {
-  const key = typeof import.meta !== 'undefined' ? import.meta.env.VITE_GEMINI_API_KEY : null;
-  if (!key) throw new Error("Chave da API Gemini não configurada. Adicione VITE_GEMINI_API_KEY ao .env.local");
+function geminiHeaders() {
+  return {
+    "Content-Type": "application/json",
+    apikey: import.meta.env.VITE_SUPABASE_ANON_KEY || "",
+    Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY || ""}`,
+  };
+}
 
-  const prompt = `Você é o moderador automático do mural público de um app cristão de devocional. Analise o texto abaixo e responda SOMENTE com um JSON válido, sem markdown e sem texto adicional, exatamente neste formato:
-{"aprovado":true ou false,"motivo":"categoria curta em português caso reprovado (ex: discurso de ódio, assédio, conteúdo sexual, spam, golpe, dados pessoais expostos, violência), ou null se aprovado"}
-
-Reprove apenas em casos claros de: discurso de ódio, assédio ou bullying, conteúdo sexual explícito, violência grave, spam ou propaganda comercial, golpes/phishing, ou exposição de dados pessoais de terceiros (telefone, endereço, CPF). Desabafos emocionais, tristeza, dúvidas de fé, pedidos de oração e discordância religiosa educada NÃO devem ser reprovados.
-
-Texto: """${text}"""`;
-  const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent?key=${key}`, {
+async function geminiFetch(path, text) {
+  const url = geminiUrl(path);
+  if (!url) throw new Error("Supabase URL não configurada");
+  const response = await fetch(url, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      contents: [{ parts: [{ text: prompt }] }],
-      generationConfig: { response_mime_type: "application/json", maxOutputTokens: 300 },
-    }),
+    headers: geminiHeaders(),
+    body: JSON.stringify({ text }),
   });
-  if (!response.ok) throw new Error("moderation Gemini API status " + response.status);
-  const data = await response.json();
-  const raw = (data?.candidates?.[0]?.content?.parts ?? []).map((p) => p.text ?? "").join("").replace(/```json|```/g, "").trim();
-  return JSON.parse(raw);
+  if (!response.ok) throw new Error("Gemini API status " + response.status);
+  return response.json();
+}
+
+// Uses Google Gemini to suggest a Bible passage based on the journal entry.
+async function askAIForPassage(journalText) {
+  return geminiFetch("generate", journalText);
+}
+
+// Uses Google Gemini to moderate community posts before publishing.
+async function moderateText(text) {
+  return geminiFetch("moderate", text);
 }
 
 // Two-note synthesized chime (no audio files — generated with the Web Audio API, so nothing to license)
