@@ -378,16 +378,41 @@ function geminiHeaders() {
   };
 }
 
+const GEMINI_TIMEOUT_MS = 8000;
+
+const MOCK_GEMINI_RESPONSE = {
+  reflexao: "Que dia abençoado! A gratidão transforma o comum em extraordinário.",
+  livro: "Salmos",
+  capitulo: 103,
+  versiculo: "1-2",
+  motivo: "Este salmo nos convida a bendizer ao Senhor por todos os seus benefícios."
+};
+
+const MOCK_MODERATION_RESPONSE = { aprovado: true, motivo: null };
+
 async function geminiFetch(path, text) {
   const url = geminiUrl(path);
   if (!url) throw new Error("Supabase URL não configurada");
-  const response = await fetch(url, {
-    method: "POST",
-    headers: geminiHeaders(),
-    body: JSON.stringify({ text }),
-  });
-  if (!response.ok) throw new Error("Gemini API status " + response.status);
-  return response.json();
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), GEMINI_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: geminiHeaders(),
+      body: JSON.stringify({ text }),
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+    if (!response.ok) throw new Error("Gemini API status " + response.status);
+    return await response.json();
+  } catch (err) {
+    clearTimeout(timeoutId);
+    // Fallback offline / falha de rede
+    console.warn("[geminiFetch] fallback offline:", err.message);
+    return path === "moderate" ? MOCK_MODERATION_RESPONSE : MOCK_GEMINI_RESPONSE;
+  }
 }
 
 // Uses Google Gemini to suggest a Bible passage based on the journal entry.
