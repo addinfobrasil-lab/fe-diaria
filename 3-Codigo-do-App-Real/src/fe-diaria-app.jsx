@@ -1,6 +1,7 @@
 import { useState, useEffect, createContext, useContext } from "react";
 import { supabase } from "./lib/supabaseClient.js";
 import { buyPremium as buyPremiumFlow, getPayMode, checkEntitlement, verifyStripePurchase } from "./lib/payments.js";
+import RealAdBanner from "./components/AdBanner.jsx";
 import { BIBLE_FALLBACK } from "./data/bible-fallback.js";
 import { StatusBar as NativeStatusBar } from "@capacitor/status-bar";
 import {
@@ -348,14 +349,17 @@ function timeAgo(ts) {
 
 async function shareText(text, title) {
   try {
-    if (typeof window !== "undefined" && window.Capacitor?.Share) {
-      await window.Capacitor.Share.share({ title, text });
+    // 1) Native Capacitor Share (app nativo)
+    if (typeof window !== "undefined" && window.Capacitor?.Plugins?.Share) {
+      await window.Capacitor.Plugins.Share.share({ title, text });
       return;
     }
+    // 2) Web Share API (PWA/navegador moderno)
     if (navigator.share) {
       await navigator.share({ title, text });
       return;
     }
+    // 3) Fallback: clipboard
     await navigator.clipboard.writeText(text);
     alert("Texto copiado para compartilhar.");
   } catch { /* usuário cancelou ou sem suporte */ }
@@ -552,7 +556,7 @@ function AffiliateStrip() {
     </div>
   );
 }
-function MonetizationBlock() { return (<><AdBanner /><AffiliateStrip /></>); }
+function MonetizationBlock() { return (<><RealAdBanner /><AffiliateStrip /></>); }
 
 function PremiumGate({ feature, onOpenPremium }) {
   const T = useTheme();
@@ -1366,20 +1370,24 @@ function ChurchFinder() {
   const [cityName, setCityName] = useState("");
   const [churches, setChurches] = useState([]);
   const [errorMsg, setErrorMsg] = useState("");
+  const [permissionDenied, setPermissionDenied] = useState(false);
 
   const getPosition = () => new Promise((resolve, reject) => {
     const isNative = typeof window !== "undefined" && window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform();
     if (isNative && window.Capacitor.Plugins?.Geolocation) {
       window.Capacitor.Plugins.Geolocation.requestPermissions().then((perm) => {
-        if (perm.location !== "granted") {
-          // Tenta abrir configurações do app no Android
-          if (window.Capacitor.Plugins?.App) {
-            window.Capacitor.Plugins.App.openAppSettings();
-          }
-          return reject(new Error("negada"));
+        if (perm.location === "granted") {
+          return window.Capacitor.Plugins.Geolocation.getCurrentPosition()
+            .then((pos) => resolve({ lat: pos.coords.latitude, lon: pos.coords.longitude }))
+            .catch((e) => reject(e));
         }
-        return window.Capacitor.Plugins.Geolocation.getCurrentPosition();
-      }).then((pos) => resolve({ lat: pos.coords.latitude, lon: pos.coords.longitude })).catch((e) => reject(e));
+        // Permissão negada — abre configurações e avisa para tentar novamente
+        setPermissionDenied(true);
+        if (window.Capacitor.Plugins?.App) {
+          window.Capacitor.Plugins.App.openAppSettings();
+        }
+        reject(new Error("negada"));
+      }).catch((e) => reject(e));
     } else if ("geolocation" in navigator) {
       navigator.geolocation.getCurrentPosition(
         (pos) => resolve({ lat: pos.coords.latitude, lon: pos.coords.longitude }),
@@ -1393,16 +1401,19 @@ function ChurchFinder() {
 
   const find = async () => {
     setStatus("locating");
+    setPermissionDenied(false);
     let lat, lon;
     try {
       const pos = await getPosition();
       lat = pos.lat; lon = pos.lon;
     } catch (e) {
-      const msg = e && e.message === "negada"
-        ? "Permissão de localização negada. Ative a localização nas configurações do app."
-        : "Permissão de localização negada ou indisponível neste dispositivo.";
+      const isDenied = e && e.message === "negada";
+      const msg = isDenied
+        ? "Permissão de localização negada. Ative nas configurações e tente novamente."
+        : "Não foi possível obter sua localização. Verifique GPS/internet e tente novamente.";
       setStatus("error");
       setErrorMsg(msg);
+      setPermissionDenied(isDenied);
       return;
     }
     setStatus("loading");
