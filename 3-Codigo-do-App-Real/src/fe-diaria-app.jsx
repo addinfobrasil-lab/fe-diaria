@@ -1371,7 +1371,13 @@ function ChurchFinder() {
     const isNative = typeof window !== "undefined" && window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform();
     if (isNative && window.Capacitor.Plugins?.Geolocation) {
       window.Capacitor.Plugins.Geolocation.requestPermissions().then((perm) => {
-        if (perm.location !== "granted") return reject(new Error("negada"));
+        if (perm.location !== "granted") {
+          // Tenta abrir configurações do app no Android
+          if (window.Capacitor.Plugins?.App) {
+            window.Capacitor.Plugins.App.openAppSettings();
+          }
+          return reject(new Error("negada"));
+        }
         return window.Capacitor.Plugins.Geolocation.getCurrentPosition();
       }).then((pos) => resolve({ lat: pos.coords.latitude, lon: pos.coords.longitude })).catch((e) => reject(e));
     } else if ("geolocation" in navigator) {
