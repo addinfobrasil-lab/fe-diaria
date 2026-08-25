@@ -1374,27 +1374,36 @@ function ChurchFinder() {
 
   const getPosition = () => new Promise((resolve, reject) => {
     const isNative = typeof window !== "undefined" && window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform();
+    console.log('[Radar] getPosition called, isNative:', isNative);
     if (isNative && window.Capacitor.Plugins?.Geolocation) {
+      console.log('[Radar] requesting location permission...');
       window.Capacitor.Plugins.Geolocation.requestPermissions().then((perm) => {
+        console.log('[Radar] permission result:', perm);
         if (perm.location === "granted") {
+          console.log('[Radar] permission granted, getting position...');
           return window.Capacitor.Plugins.Geolocation.getCurrentPosition()
-            .then((pos) => resolve({ lat: pos.coords.latitude, lon: pos.coords.longitude }))
-            .catch((e) => reject(e));
+            .then((pos) => {
+              console.log('[Radar] position obtained:', pos.coords.latitude, pos.coords.longitude);
+              resolve({ lat: pos.coords.latitude, lon: pos.coords.longitude });
+            })
+            .catch((e) => { console.error('[Radar] getCurrentPosition error:', e); reject(e); });
         }
-        // Permissão negada — abre configurações e avisa para tentar novamente
+        console.warn('[Radar] permission denied, opening settings...');
         setPermissionDenied(true);
         if (window.Capacitor.Plugins?.App) {
           window.Capacitor.Plugins.App.openAppSettings();
         }
         reject(new Error("negada"));
-      }).catch((e) => reject(e));
+      }).catch((e) => { console.error('[Radar] requestPermissions error:', e); reject(e); });
     } else if ("geolocation" in navigator) {
+      console.log('[Radar] using web geolocation API');
       navigator.geolocation.getCurrentPosition(
-        (pos) => resolve({ lat: pos.coords.latitude, lon: pos.coords.longitude }),
-        (err) => reject(err),
+        (pos) => { console.log('[Radar] web position:', pos.coords.latitude, pos.coords.longitude); resolve({ lat: pos.coords.latitude, lon: pos.coords.longitude }); },
+        (err) => { console.error('[Radar] web geolocation error:', err); reject(err); },
         { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 }
       );
     } else {
+      console.error('[Radar] geolocation unsupported');
       reject(new Error("unsupported"));
     }
   });

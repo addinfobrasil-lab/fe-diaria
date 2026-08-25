@@ -26,32 +26,47 @@ const HAS_REAL_ADS = !!import.meta.env.VITE_ADMOB_BANNER_ID;
 let initialized = false;
 
 export async function initAds() {
-  if (!Capacitor.isNativePlatform()) return; // navegador/preview: não faz nada
-  if (initialized) return;
+  if (!Capacitor.isNativePlatform()) { console.log('[AdMob] not native, skipping'); return; }
+  if (initialized) { console.log('[AdMob] already initialized'); return; }
 
-  await AdMob.initialize({
-    initializeForTesting: !HAS_REAL_ADS,
-  });
+  console.log('[AdMob] initializing...', { HAS_REAL_ADS, AD_UNIT_ID_BANNER: AD_UNIT_ID_BANNER?.slice(0,20)+'...' });
+  try {
+    await AdMob.initialize({
+      initializeForTesting: !HAS_REAL_ADS,
+    });
+    console.log('[AdMob] initialized ok');
 
-  // Consentimento de anúncios (UMP do Google) — complementa, mas não substitui,
-  // o consentimento LGPD específico que já existe em "Meus Dados" no app.
-  const consentInfo = await AdMob.requestConsentInfo();
-  if (consentInfo.isConsentFormAvailable && consentInfo.status === 'REQUIRED') {
-    await AdMob.showConsentForm();
+    const consentInfo = await AdMob.requestConsentInfo();
+    console.log('[AdMob] consent info:', consentInfo);
+    if (consentInfo.isConsentFormAvailable && consentInfo.status === 'REQUIRED') {
+      await AdMob.showConsentForm();
+      console.log('[AdMob] consent form shown');
+    }
+
+    initialized = true;
+    console.log('[AdMob] fully initialized');
+  } catch (e) {
+    console.error('[AdMob] init error:', e);
+    throw e;
   }
-
-  initialized = true;
 }
 
 export async function showBanner() {
-  if (!Capacitor.isNativePlatform()) return;
-  await initAds();
-  await AdMob.showBanner({
-    adId: AD_UNIT_ID_BANNER,
-    adSize: BannerAdSize.ADAPTIVE_BANNER,
-    position: BannerAdPosition.BOTTOM_CENTER,
-    isTesting: !HAS_REAL_ADS,
-  });
+  if (!Capacitor.isNativePlatform()) { console.log('[AdMob] showBanner: not native'); return; }
+  console.log('[AdMob] showBanner called');
+  try {
+    await initAds();
+    console.log('[AdMob] showing banner...', { adId: AD_UNIT_ID_BANNER?.slice(0,20)+'...' });
+    await AdMob.showBanner({
+      adId: AD_UNIT_ID_BANNER,
+      adSize: BannerAdSize.ADAPTIVE_BANNER,
+      position: BannerAdPosition.BOTTOM_CENTER,
+      isTesting: !HAS_REAL_ADS,
+    });
+    console.log('[AdMob] banner shown ok');
+  } catch (e) {
+    console.error('[AdMob] showBanner error:', e);
+  }
 }
 
 export async function hideBanner() {
