@@ -36,10 +36,10 @@
             <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/file_paths" />
         </provider>
 
-        <!-- AdMob App ID — SUBSTITUA PELO SEU ID REAL (formato: ca-app-pub-XXXXXXXXXXXXXXXX~YYYYYYYYYY) -->
+        <!-- AdMob App ID -->
         <meta-data
             android:name="com.google.android.gms.ads.APPLICATION_ID"
-            android:value="SEU_ADMOB_APP_ID_REAL_AQUI" />
+            android:value="ca-app-pub-6150457068069435~2560787521" />
     </application>
 
     <!-- Permissions -->
