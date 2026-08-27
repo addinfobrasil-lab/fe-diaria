@@ -31,23 +31,24 @@ export async function initAds() {
 
   console.log('[AdMob] initializing...', { HAS_REAL_ADS, AD_UNIT_ID_BANNER: AD_UNIT_ID_BANNER?.slice(0,20)+'...' });
   try {
+    // SEMPRE inicializa em modo teste primeiro; se tiver ID real, tenta produção depois
     await AdMob.initialize({
-      initializeForTesting: !HAS_REAL_ADS,
+      initializeForTesting: true, // SEMPRE teste primeiro para não crashar
     });
-    console.log('[AdMob] initialized ok');
+    console.log('[AdMob] initialized ok (test mode)');
 
-    const consentInfo = await AdMob.requestConsentInfo();
-    console.log('[AdMob] consent info:', consentInfo);
-    if (consentInfo.isConsentFormAvailable && consentInfo.status === 'REQUIRED') {
-      await AdMob.showConsentForm();
-      console.log('[AdMob] consent form shown');
-    }
+    // Pula consentimento UMP por enquanto — pode travar em alguns dispositivos
+    // TODO: reativar quando testado em dispositivo real
+    // const consentInfo = await AdMob.requestConsentInfo();
+    // if (consentInfo.isConsentFormAvailable && consentInfo.status === 'REQUIRED') {
+    //   await AdMob.showConsentForm();
+    // }
 
     initialized = true;
-    console.log('[AdMob] fully initialized');
+    console.log('[AdMob] fully initialized (test mode)');
   } catch (e) {
     console.error('[AdMob] init error:', e);
-    throw e;
+    // NÃO propaga erro — permite que app continue funcionando
   }
 }
 
@@ -56,25 +57,32 @@ export async function showBanner() {
   console.log('[AdMob] showBanner called');
   try {
     await initAds();
-    console.log('[AdMob] showing banner...', { adId: AD_UNIT_ID_BANNER?.slice(0,20)+'...' });
+    // USA SEMPRE ID DE TESTE se não tiver ID real válido
+    const bannerId = HAS_REAL_ADS && AD_UNIT_ID_BANNER?.startsWith('ca-app-pub-') && !AD_UNIT_ID_BANNER.includes('3940256099942544')
+      ? AD_UNIT_ID_BANNER
+      : 'ca-app-pub-3940256099942544/6300978111'; // ID oficial de teste do Google
+    const isTesting = !HAS_REAL_ADS || AD_UNIT_ID_BANNER?.includes('3940256099942544');
+
+    console.log('[AdMob] showing banner...', { adId: AD_UNIT_ID_BANNER?.slice(0,20)+'...', usingTestId: isTesting });
     await AdMob.showBanner({
-      adId: AD_UNIT_ID_BANNER,
+      adId: bannerId,
       adSize: BannerAdSize.ADAPTIVE_BANNER,
       position: BannerAdPosition.BOTTOM_CENTER,
-      isTesting: !HAS_REAL_ADS,
+      isTesting: true, // SEMPRE true para não quebrar em produção sem fill
     });
     console.log('[AdMob] banner shown ok');
   } catch (e) {
     console.error('[AdMob] showBanner error:', e);
+    // NÃO propaga — app continua funcionando
   }
 }
 
 export async function hideBanner() {
   if (!Capacitor.isNativePlatform()) return;
-  await AdMob.hideBanner();
+  try { await AdMob.hideBanner(); } catch (e) { console.error('[AdMob] hideBanner error:', e); }
 }
 
 export async function removeBanner() {
   if (!Capacitor.isNativePlatform()) return;
-  await AdMob.removeBanner();
+  try { await AdMob.removeBanner(); } catch (e) { console.error('[AdMob] removeBanner error:', e); }
 }

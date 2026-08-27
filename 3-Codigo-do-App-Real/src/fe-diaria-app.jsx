@@ -1369,28 +1369,31 @@ function ChurchFinder() {
       console.log('[Radar] requesting location permission...');
       window.Capacitor.Plugins.Geolocation.requestPermissions().then((perm) => {
         console.log('[Radar] permission result:', perm);
-        if (perm.location === "granted") {
+        const granted = perm.location === "granted";
+        const prompt = perm.location === "prompt"; // Android pode retornar "prompt"
+        if (granted) {
           console.log('[Radar] permission granted, getting position...');
-          return window.Capacitor.Plugins.Geolocation.getCurrentPosition()
+          return window.Capacitor.Plugins.Geolocation.getCurrentPosition({ timeout: 10000, maximumAge: 60000 })
             .then((pos) => {
               console.log('[Radar] position obtained:', pos.coords.latitude, pos.coords.longitude);
               resolve({ lat: pos.coords.latitude, lon: pos.coords.longitude });
             })
             .catch((e) => { console.error('[Radar] getCurrentPosition error:', e); reject(e); });
         }
-        console.warn('[Radar] permission denied, opening settings...');
+        // Permissão negada OU prompt (usuário não decidiu) — abre configurações
+        const msg = prompt ? "Permissão pendente. Ative nas configurações e tente novamente." : "Permissão negada. Ative nas configurações e tente novamente.";
         setPermissionDenied(true);
         if (window.Capacitor.Plugins?.App) {
           window.Capacitor.Plugins.App.openAppSettings();
         }
-        reject(new Error("negada"));
+        reject(new Error(msg));
       }).catch((e) => { console.error('[Radar] requestPermissions error:', e); reject(e); });
     } else if ("geolocation" in navigator) {
       console.log('[Radar] using web geolocation API');
       navigator.geolocation.getCurrentPosition(
         (pos) => { console.log('[Radar] web position:', pos.coords.latitude, pos.coords.longitude); resolve({ lat: pos.coords.latitude, lon: pos.coords.longitude }); },
         (err) => { console.error('[Radar] web geolocation error:', err); reject(err); },
-        { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 }
+        { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
       );
     } else {
       console.error('[Radar] geolocation unsupported');
@@ -1415,10 +1418,12 @@ function ChurchFinder() {
       setPermissionDenied(isDenied);
       return;
     }
+
     setStatus("loading");
     try {
       // Geocodificação reversa (grátis, OpenStreetMap Nominatim) — só para mostrar o nome da cidade
-      const geoRes = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}&zoom=10`);
+      const ua = 'FeDiaria/1.0 (https://github.com/addinfobrasil-lab/fe-diaria)';
+      const geoRes = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}&zoom=10`, { headers: { 'User-Agent': ua } });
       const geoData = await geoRes.json();
       const addr = geoData.address || {};
       setCityName(addr.city || addr.town || addr.village || addr.county || "sua região");
@@ -1428,7 +1433,7 @@ function ChurchFinder() {
       // não têm a tag "religion=christian" — a filtragem é feita no cliente.
       // O raio é 8 km e o limite alto para não cortar igrejas próximas;
       // a ordenação por distância e o corte para 20 ficam no cliente.
-      const query = `[out:json][timeout:40];(node["amenity"="place_of_worship"](around:8000,${lat},${lon});way["amenity"="place_of_worship"](around:8000,${lat},${lon});relation["amenity"="place_of_worship"](around:8000,${lat},${lon}););out center 150;`;
+      const query = `[out:json][timeout:25];(node["amenity"="place_of_worship"](around:8000,${lat},${lon});way["amenity"="place_of_worship"](around:8000,${lat},${lon});relation["amenity"="place_of_worship"](around:8000,${lat},${lon}););out center 100;`;
       // Vários servidores Overpass para redundância (o público tem rate limit).
       const overpassServers = [
         "https://overpass-api.de/api/interpreter",
@@ -1438,7 +1443,7 @@ function ChurchFinder() {
       let opData = null;
       for (const server of overpassServers) {
         try {
-          const opRes = await fetch(server, { method: "POST", body: query });
+          const opRes = await fetch(server, { method: "POST", body: query, headers: { 'User-Agent': ua, 'Content-Type': 'application/x-www-form-urlencoded' } });
           if (opRes.ok) {
             opData = await opRes.json();
             break;
