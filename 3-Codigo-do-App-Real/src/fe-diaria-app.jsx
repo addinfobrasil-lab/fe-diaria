@@ -521,16 +521,6 @@ function ScreenHeader({ title }) {
   return (<div className="px-5 pt-1 pb-2"><h1 className="fd-display text-xl" style={{ color: T.text }}>{title}</h1></div>);
 }
 
-function AdBanner() {
-  const T = useTheme();
-  return (
-    <div className="mx-5 mt-3 rounded-xl border border-dashed flex items-center justify-center gap-2 py-3 text-xs" style={{ borderColor: T.border, color: T.textMuted }}>
-      <span className="uppercase tracking-wider font-semibold" style={{ color: T.accent }}>Anúncio</span>
-      <span>Espaço reservado para banner (Google AdMob)</span>
-    </div>
-  );
-}
-
 function AffiliateStrip() {
   const T = useTheme();
   return (
@@ -1370,7 +1360,7 @@ function ChurchFinder() {
   const [cityName, setCityName] = useState("");
   const [churches, setChurches] = useState([]);
   const [errorMsg, setErrorMsg] = useState("");
-  const [permissionDenied, setPermissionDenied] = useState(false);
+  const [_permissionDenied, setPermissionDenied] = useState(false);
 
   const getPosition = () => new Promise((resolve, reject) => {
     const isNative = typeof window !== "undefined" && window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform();

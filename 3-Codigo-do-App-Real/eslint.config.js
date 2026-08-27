@@ -19,6 +19,7 @@ export default [
         atob: 'readonly', location: 'readonly', __dirname: 'readonly',
         Blob: 'readonly', URL: 'readonly', setInterval: 'readonly',
         clearInterval: 'readonly', confirm: 'readonly', HTMLInputElement: 'readonly',
+        AbortController: 'readonly', AbortSignal: 'readonly',
       },
     },
     plugins: { react, 'react-hooks': reactHooks },
