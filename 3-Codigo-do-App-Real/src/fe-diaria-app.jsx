@@ -2,6 +2,7 @@ import { useState, useEffect, createContext, useContext } from "react";
 import { supabase } from "./lib/supabaseClient.js";
 import { buyPremium as buyPremiumFlow, getPayMode, checkEntitlement, verifyStripePurchase } from "./lib/payments.js";
 import RealAdBanner from "./components/AdBanner.jsx";
+import { logRadar, logShare, logGemini, logError, logInfo } from "./lib/debug.js";
 import { BIBLE_FALLBACK } from "./data/bible-fallback.js";
 import { StatusBar as NativeStatusBar } from "@capacitor/status-bar";
 import {
@@ -349,20 +350,28 @@ function timeAgo(ts) {
 
 async function shareText(text, title) {
   try {
+    logShare('shareText called', { title: title?.slice(0,50) });
     // 1) Native Capacitor Share (app nativo)
     if (typeof window !== "undefined" && window.Capacitor?.Plugins?.Share) {
+      logShare('using Capacitor.Plugins.Share');
       await window.Capacitor.Plugins.Share.share({ title, text });
+      logShare('native share success');
       return;
     }
     // 2) Web Share API (PWA/navegador moderno)
     if (navigator.share) {
+      logShare('using navigator.share');
       await navigator.share({ title, text });
+      logShare('web share success');
       return;
     }
     // 3) Fallback: clipboard
     await navigator.clipboard.writeText(text);
+    logShare('clipboard fallback used');
     alert("Texto copiado para compartilhar.");
-  } catch { /* usuário cancelou ou sem suporte */ }
+  } catch (e) {
+    logError('Share', e);
+  }
 }
 
 // Uses Google Gemini via a Supabase Edge Function (the API key stays on the
@@ -402,6 +411,7 @@ async function geminiFetch(path, text) {
   const timeoutId = setTimeout(() => controller.abort(), GEMINI_TIMEOUT_MS);
 
   try {
+    logGemini('geminiFetch called', { path, textLength: text.length });
     const response = await fetch(url, {
       method: "POST",
       headers: geminiHeaders(),
@@ -410,11 +420,12 @@ async function geminiFetch(path, text) {
     });
     clearTimeout(timeoutId);
     if (!response.ok) throw new Error("Gemini API status " + response.status);
-    return await response.json();
+    const data = await response.json();
+    logGemini('geminiFetch success', { path });
+    return data;
   } catch (err) {
     clearTimeout(timeoutId);
-    // Fallback offline / falha de rede
-    console.warn("[geminiFetch] fallback offline:", err.message);
+    logGemini('fallback offline', { error: err.message });
     return path === "moderate" ? MOCK_MODERATION_RESPONSE : MOCK_GEMINI_RESPONSE;
   }
 }
@@ -506,12 +517,25 @@ function VerseSkeleton() {
 
 function StatusBar({ theme, onToggleTheme }) {
   const T = useTheme();
+  const [showDebug, setShowDebug] = useState(false);
+  const [pressTimer, setPressTimer] = useState(null);
+
+  const handlePressStart = () => {
+    const timer = setTimeout(() => setShowDebug(true), 800);
+    setPressTimer(timer);
+  };
+  const handlePressEnd = () => {
+    if (pressTimer) clearTimeout(pressTimer);
+    setPressTimer(null);
+  };
+
   return (
-    <div className="flex items-center justify-between px-5 pt-3 pb-1">
+    <div className="flex items-center justify-between px-5 pt-3 pb-1" onMouseDown={handlePressStart} onMouseUp={handlePressEnd} onMouseLeave={handlePressEnd} onTouchStart={handlePressStart} onTouchEnd={handlePressEnd}>
       <span className="text-xs font-medium" style={{ color: T.text }}>Fé Diária</span>
       <button onClick={onToggleTheme} className="transition active:scale-95" aria-label="Alternar tema">
         {theme === "dark" ? <Sun size={14} style={{ color: T.text }} /> : <Moon size={14} style={{ color: T.text }} />}
       </button>
+      <DebugPanel />
     </div>
   );
 }
@@ -547,6 +571,60 @@ function AffiliateStrip() {
   );
 }
 function MonetizationBlock() { return (<><RealAdBanner /><AffiliateStrip /></>); }
+
+// Debug Panel Component (hidden, activated by long-press on title)
+function DebugPanel() {
+  const T = useTheme();
+  const [isOpen, setIsOpen] = useState(false);
+  const [logs, setLogs] = useState([]);
+
+  useEffect(() => {
+    const { subscribe, getLogs } = require('./lib/debug.js');
+    setLogs(getLogs());
+    const unsub = subscribe((entry) => {
+      if (entry.type === 'cleared') setLogs([]);
+      else setLogs(prev => [entry, ...prev].slice(0, 100));
+    });
+    return () => unsub();
+  }, []);
+
+  const handleExport = async () => {
+    const { exportLogsToFile } = require('./lib/debug.js');
+    const result = await exportLogsToFile();
+    alert(result.ok ? `Logs salvos em: ${result.path}` : 'Erro ao exportar');
+  };
+
+  const clearLogs = () => {
+    require('./lib/debug.js').clearLogs();
+    setLogs([]);
+  };
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex flex-col" style={{ backgroundColor: 'rgba(0,0,0,0.9)' }}>
+      <div className="flex items-center justify-between p-3 border-b" style={{ borderColor: T.border }}>
+        <span className="font-mono text-xs" style={{ color: T.accent }}>🔧 DEBUG — Fé Diária</span>
+        <div className="flex gap-2">
+          <button onClick={clearLogs} className="px-2 py-1 text-xs rounded" style={{ backgroundColor: T.cardAlt, color: T.text }}>Limpar</button>
+          <button onClick={() => setIsOpen(false)} className="px-2 py-1 text-xs rounded" style={{ backgroundColor: T.cardAlt, color: T.text }}>Fechar</button>
+        </div>
+      </div>
+      <button onClick={async () => { const { exportLogsToFile } = require('./lib/debug.js'); const r = await exportLogsToFile(); alert(r.ok ? `Logs salvos em: ${r.path}` : 'Erro ao exportar'); }} className="m-3 px-3 py-2 text-xs rounded" style={{ backgroundColor: T.accent, color: T.onAccent, alignSelf: 'flex-end' }}>
+        📥 Exportar logs para Download/FeDiaria_debug.txt
+      </button>
+      <div className="flex-1 overflow-y-auto p-3" style={{ backgroundColor: T.canvas }}>
+        <pre className="font-mono text-[10px] whitespace-pre-wrap" style={{ color: T.text }}>
+          {logs.map((l, i) => (
+            <div key={i} style={{ opacity: l.type === 'cleared' ? 0.5 : 1 }}>
+              [{l.time?.slice(11, 23)}] <span style={{ color: T.accent }}>{l.category}</span> {l.message}{l.data ? ' | ' + l.data : ''}
+            </div>
+          )).reverse().join('')}
+        </pre>
+      </div>
+    </div>
+  );
+}
 
 function PremiumGate({ feature, onOpenPremium }) {
   const T = useTheme();
