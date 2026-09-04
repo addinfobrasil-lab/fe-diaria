@@ -2291,7 +2291,7 @@ export default function App() {
                 </div>
               ) : (<ScreenHeader title={TITLES[tab]} />)}
 
-              <div key={tab} className="flex-1 overflow-y-auto fd-scroll fd-fadein">
+              <div key={tab} className="flex-1 overflow-y-auto fd-scroll fd-fadein" style={{ paddingBottom: isNative && !isPremium ? 60 : 0 }}>
                 {tab === "home" && <HomeScreen verse={verse} onOpen={setModal} doneCount={completedDays.size} isPremium={isPremium} songOfDay={songOfDay} onGoLouvor={() => setTab("louvor")} lastRead={lastRead} onContinueReading={continueReading} user={user} onOpenProfile={() => setModal("profile")} />}
                 {tab === "biblia" && <BibleScreen book={bibleBook} setBook={setBibleBook} chapter={bibleChapter} setChapter={setBibleChapter} cache={bibleCache} setCache={setBibleCache} version={bibleVersion} setVersion={setBibleVersion} favoriteVerses={favoriteVerses} toggleFavoriteVerse={toggleFavoriteVerse} lastRead={lastRead} onMarkLastRead={markLastRead} isPremium={isPremium} />}
                 {tab === "louvor" && <MusicScreen favorites={favorites} toggleFavorite={toggleFavorite} songOfDay={songOfDay} isPremium={isPremium} />}
